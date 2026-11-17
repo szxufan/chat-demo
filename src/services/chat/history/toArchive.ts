@@ -256,6 +256,10 @@ export const toSessionFile = (original: Session, exportImage: ExportImage): Sess
     }
   })
   const current = getVisibleMessages(session).at(-1)
+  // 摘要锚点映射为归档数字 id；锚点消息不存在时整个摘要不导出
+  const summaryAnchor = session.contextSummary
+    ? ids.get(session.contextSummary.anchorMessageId)
+    : undefined
   return {
     id: session.id,
     title: session.title || null,
@@ -265,6 +269,14 @@ export const toSessionFile = (original: Session, exportImage: ExportImage): Sess
     inserted_at: iso(session.createdAt),
     updated_at: iso(session.updatedAt),
     ...(session.systemPrompt !== undefined ? { system_prompt: session.systemPrompt } : {}),
+    ...(session.contextSummary && summaryAnchor !== undefined
+      ? {
+          context_summary: {
+            text: session.contextSummary.text,
+            anchor_message_id: summaryAnchor,
+          },
+        }
+      : {}),
     messages,
   }
 }

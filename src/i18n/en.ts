@@ -82,6 +82,8 @@ export const en = {
   completionServerBusyToast: 'Server busy, please try again later.',
   unknownError: 'Unknown error',
   replyRefused: "Sorry, that's beyond my current scope. Let's talk about something else.",
+  replyContextOverflow:
+    'The conversation exceeds the model context limit even after automatic trimming. Delete earlier messages or start a new session.',
   messageThinkDuration: 'Thought for {count} second',
   messageThinkDurationPlural: 'Thought for {count} seconds',
   messageThinkStopped: 'Stopped',
@@ -192,6 +194,13 @@ export const en = {
   retry: 'Retry',
   autoTitleSystem:
     'Summarize the conversation topic as a chat title in at most 20 words. Output only the title.',
+  contextSummarySystem:
+    'You are a conversation history compressor. Merge the given early conversation (possibly with a previous summary) into one updated summary that serves as background for later turns. Keep key facts, conclusions and decisions, code/file/link highlights, user preferences and open items; drop pleasantries and redundant detail. Output a bullet-style summary in the language of the conversation, at most 1000 words, and nothing but the summary.',
+  contextSummaryLabel: 'Summary of the earlier conversation:',
+  contextCompressingToast: 'Long conversation — compressing earlier context…',
+  contextCompressFailedToast: 'Failed to compress earlier conversation; sending as-is this time',
+  contextTrimmedRetryToast:
+    'Context exceeds the model limit; trimmed earlier conversation and retrying',
   latestReminderLanguage: 'English',
   settingsLocaleZhCN: 'Simplified Chinese',
   settingsLocaleEnUS: 'English',

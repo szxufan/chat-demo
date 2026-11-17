@@ -35,6 +35,8 @@ export type SessionFile = {
   updated_at: Iso8601Utc
   /** 会话级系统提示词覆盖；缺省表示跟随全局设置 */
   system_prompt?: string
+  /** 上下文裁剪产生的早期对话摘要；anchor_message_id 为摘要覆盖的最后一条 assistant 消息 */
+  context_summary?: { text: string; anchor_message_id: number }
   /** 消息树，分支靠 parent_id */
   messages: ChatMessage[]
 }

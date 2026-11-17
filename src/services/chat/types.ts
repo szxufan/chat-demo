@@ -118,6 +118,11 @@ export type Session = {
   rootMessageId?: string | null
   /** 会话级系统提示词覆盖；undefined 表示跟随全局设置，空字符串表示不使用系统提示词。 */
   systemPrompt?: string
+  /**
+   * 上下文裁剪产生的早期对话摘要。anchorMessageId 是摘要覆盖的最后一条 assistant 消息，
+   * 兼作请求窗口起点锚点；锚点不在当前可见路径上时摘要失效。text 为空表示仅机械裁剪、无摘要。
+   */
+  contextSummary?: { text: string; anchorMessageId: string }
 }
 
 /** 会话列表元数据；消息只在打开会话时加载。 */

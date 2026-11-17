@@ -249,6 +249,11 @@ export const readSessionIndex: Read<SessionIndexEntry[]> = list((value) => {
   }
 })
 
+const contextSummary: Read<NonNullable<SessionFile['context_summary']>> = (value) => {
+  const item = record(value)
+  return { text: string(item.text), anchor_message_id: count(item.anchor_message_id) }
+}
+
 export const readSessionFile: Read<SessionFile> = (value) => {
   const item = record(value)
   return {
@@ -259,6 +264,7 @@ export const readSessionFile: Read<SessionFile> = (value) => {
     inserted_at: time(item.inserted_at),
     updated_at: time(item.updated_at),
     ...('system_prompt' in item ? { system_prompt: string(item.system_prompt) } : {}),
+    ...('context_summary' in item ? { context_summary: contextSummary(item.context_summary) } : {}),
     messages: list(message)(item.messages),
   }
 }

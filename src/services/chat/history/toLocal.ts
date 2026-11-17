@@ -280,6 +280,8 @@ const buildTree = (file: SessionFile): Pick<Session, 'messages' | 'rootMessageId
 
 /** 转换单个会话，并列出本会话目录下需要从 ZIP 读取的图片。 */
 export const toLocalSession = (file: SessionFile): LocalSession => {
+  // 导入后本地消息 id 即归档数字 id 的字符串；锚点消息不存在时摘要不还原
+  const summary = file.context_summary
   const session: Session = {
     id: file.id,
     // 空标题按「新对话」显示，导出时还原为 null。
@@ -287,6 +289,14 @@ export const toLocalSession = (file: SessionFile): LocalSession => {
     createdAt: time(file.inserted_at),
     updatedAt: time(file.updated_at),
     ...(file.system_prompt !== undefined ? { systemPrompt: file.system_prompt } : {}),
+    ...(summary && file.messages.some((message) => message.id === summary.anchor_message_id)
+      ? {
+          contextSummary: {
+            text: summary.text,
+            anchorMessageId: String(summary.anchor_message_id),
+          },
+        }
+      : {}),
     ...buildTree(file),
   }
   const images = new Map<string, string>()

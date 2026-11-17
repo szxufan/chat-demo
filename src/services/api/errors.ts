@@ -53,3 +53,14 @@ export const isRetryableApiError = (error: unknown): boolean => {
     condition === 'serverBusy'
   )
 }
+
+/** 上下文超限的常见错误文案；各网关措辞不一，按关键词识别 */
+const CONTEXT_OVERFLOW_PATTERN =
+  /context (length|window|size)|maximum context|too many tokens|prompt.*too (long|large)|input.*too long|exceeds.*context/i
+
+/** 上下文超限：标准错误码，或 400/413 且文案提及上下文/token 限制。需裁剪后重试，原样重试无用 */
+export const isContextOverflowError = (error: unknown): boolean =>
+  error instanceof ApiError &&
+  (error.code === 'context_length_exceeded' ||
+    ((error.status === 400 || error.status === 413) &&
+      CONTEXT_OVERFLOW_PATTERN.test(error.message)))

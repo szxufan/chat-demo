@@ -30,7 +30,9 @@ export class ApiError extends Error {
   constructor(
     readonly kind: ApiErrorKind,
     message: string | TranslationMessage,
-    readonly status?: number
+    readonly status?: number,
+    /** 服务端错误码（如 context_length_exceeded），可能缺省 */
+    readonly code?: string
   ) {
     super(typeof message === 'string' ? message : translate(message.key, message.params))
     this.name = 'ApiError'
@@ -51,15 +53,17 @@ const readErrorResponse = async (
 ): Promise<ApiError> => {
   const text = await response.text().catch(() => '')
   let message = text || fallback
+  let code: string | undefined
   try {
     const body: unknown = JSON.parse(text)
     if (isErrorBody(body)) {
       message = body.error.message
+      code = body.error.code ?? undefined
     }
   } catch {
     // 非 JSON 响应体直接展示原文
   }
-  return new ApiError(kind, message, response.status)
+  return new ApiError(kind, message, response.status, code)
 }
 
 export const request = async (url: string, init: RequestInit): Promise<Response> => {
@@ -120,7 +124,11 @@ export const fetchModels = async (apiKey: string, signal?: AbortSignal): Promise
     signal,
   })
   const body: unknown = await response.json().catch(() => null)
-  if (typeof body !== 'object' || body === null || !Array.isArray((body as { data?: unknown }).data)) {
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !Array.isArray((body as { data?: unknown }).data)
+  ) {
     throw new ApiError('protocol', 'Unexpected /v1/models response')
   }
   return (body as { data: unknown[] }).data
@@ -162,7 +170,12 @@ export async function* streamChatCompletion(
       continue
     }
     if (isErrorBody(payload)) {
-      throw new ApiError('stream', payload.error.message)
+      throw new ApiError(
+        'stream',
+        payload.error.message,
+        undefined,
+        payload.error.code ?? undefined
+      )
     }
     const chunk = readChunk(payload)
     if (chunk) {
@@ -175,6 +188,19 @@ export async function* streamChatCompletion(
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
+
+/** 读取非流式响应首个 choice 的正文；形状不符或空白返回 null */
+const readChoiceContent = (body: unknown): string | null => {
+  if (!isRecord(body) || !Array.isArray(body.choices)) {
+    return null
+  }
+  const choice = body.choices[0]
+  if (!isRecord(choice) || !isRecord(choice.message)) {
+    return null
+  }
+  const content = choice.message.content
+  return typeof content === 'string' && content.trim() ? content.trim() : null
+}
 
 /** 网关不返回 title 扩展：首轮回复完成后另发一次小请求概括标题；失败返回 null */
 export const requestTitle = async (
@@ -203,13 +229,34 @@ export const requestTitle = async (
     signal,
   })
   const body: unknown = await response.json().catch(() => null)
-  if (!isRecord(body) || !Array.isArray(body.choices)) {
-    return null
-  }
-  const choice = body.choices[0]
-  if (!isRecord(choice) || !isRecord(choice.message)) {
-    return null
-  }
-  const content = choice.message.content
-  return typeof content === 'string' && content.trim() ? content.trim() : null
+  return readChoiceContent(body)
+}
+
+/** 把早期对话压缩为摘要（非流式、关思考）；失败返回 null，由调用方降级处理 */
+export const requestSummary = async (
+  apiKey: string,
+  model: ChatModel,
+  input: string,
+  signal?: AbortSignal
+): Promise<string | null> => {
+  const response = await request(`${API_ORIGIN}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: translate('contextSummarySystem') },
+        { role: 'user', content: input },
+      ],
+      thinking: { type: 'disabled' },
+      max_tokens: 1024,
+      stream: false,
+    }),
+    signal,
+  })
+  const body: unknown = await response.json().catch(() => null)
+  return readChoiceContent(body)
 }

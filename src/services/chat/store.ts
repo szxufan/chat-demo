@@ -1,10 +1,26 @@
 import { create } from 'zustand'
+import { showToast } from '../../components/base/toastState.js'
+import { translate } from '../../i18n/index.js'
 import { createId } from '../../utils/id.js'
-import { ApiError, requestTitle, streamChatCompletion } from '../api/client.js'
-import type { ChatModel, ChatToolCall } from '../api/types.js'
+import { ApiError, requestSummary, requestTitle, streamChatCompletion } from '../api/client.js'
+import { isContextOverflowError } from '../api/errors.js'
+import type { ChatMessageParam, ChatModel, ChatToolCall } from '../api/types.js'
 import { readImageDataUrl } from '../attachments.js'
+import { useModels } from '../models.js'
 import { useSettings } from '../settings.js'
 import { appendBranch, getVisibleMessages, normalizeSession, selectVersion } from './branches.js'
+import {
+  chunkRoundsForSummary,
+  contextBudget,
+  estimateRoundTokens,
+  estimateTextTokens,
+  estimateUserTokens,
+  MESSAGE_OVERHEAD,
+  planTrimBoundary,
+  resolveWindow,
+  serializeRoundsForSummary,
+  type ContextRound,
+} from './context.js'
 import * as db from './db.js'
 import {
   clearAllDrafts,
@@ -41,6 +57,10 @@ const SESSION_CACHE_LIMIT = 5
 const SAFETY_CHECK = { level: 'high' } as const
 /** 客户端工具循环（搜索/链接阅读）最多轮数；超过按 tool_use 收尾，禁止续写 */
 const TOOL_ROUND_LIMIT = 5
+/** 上下文超限后的原地重试次数；每次窗口减半并截断工具结果 */
+const MAX_OVERFLOW_RETRIES = 2
+/** 超限重试时工具结果内容的字符上限 */
+const TOOL_RETRY_CHAR_CAP = 6000
 
 /** 允许自动补标题的请求；手动重命名后取消本轮标题写入，包含主动清空标题的情况。 */
 const titleRequests = new Set<AbortController>()
@@ -783,10 +803,98 @@ const prepareImages = async (
   return images
 }
 
+/** 超限重试时截断工具结果内容，控制上下文开销 */
+const capToolContent = (messages: ChatMessageParam[]): ChatMessageParam[] =>
+  messages.map((message) =>
+    message.role === 'tool' && message.content.length > TOOL_RETRY_CHAR_CAP
+      ? { ...message, content: message.content.slice(0, TOOL_RETRY_CHAR_CAP) }
+      : message
+  )
+
+/** 滚动压缩：分块把早期轮次折叠进摘要；任一块失败返回 null，由调用方放弃本次主动裁剪 */
+const compressRounds = async (
+  apiKey: string,
+  model: ChatModel,
+  previousSummary: string,
+  rounds: ContextRound[],
+  signal: AbortSignal
+): Promise<string | null> => {
+  let summary = previousSummary
+  for (const chunk of chunkRoundsForSummary(rounds)) {
+    const serialized = serializeRoundsForSummary(chunk)
+    const input = summary
+      ? `Previous summary:\n${summary}\n\nNew conversation:\n${serialized}`
+      : serialized
+    const next = await requestSummary(apiKey, model, input, signal).catch(() => null)
+    if (next === null) {
+      return null
+    }
+    summary = next
+  }
+  return summary
+}
+
 /**
- * 请求并消费流：先内联图片，再发请求；流式增量按动画帧刷新内存，完成、失败或停止后落盘。
- * 模型发出 tool_calls（搜索/链接阅读）时由客户端执行并以 tool 消息回传结果继续生成，
- * 最多 TOOL_ROUND_LIMIT 轮；超过按 tool_use 收尾。首轮完成后另发小请求补会话标题。
+ * 上下文预算：未超预算不裁剪（前缀 append-only 增长，利于 KV Cache 命中）；
+ * 超预算时保留最近 KEEP_ROUNDS 轮，更早轮次经 LLM 压缩为会话摘要并持久化。
+ * 压缩失败则放弃主动裁剪按原样发送，交给超限重试兜底。
+ * 返回实际进入请求的历史与折入摘要的 system 文本。
+ */
+const fitContext = async (
+  sessionId: string,
+  request: Request,
+  systemText: string,
+  model: ChatModel,
+  apiKey: string,
+  signal: AbortSignal
+): Promise<{ history: Message[]; systemText: string }> => {
+  const rounds = getContextRounds(request.history)
+  const summary = getSession(sessionId)?.contextSummary
+  const { window, anchorIndex } = resolveWindow(rounds, summary?.anchorMessageId)
+  if (summary && anchorIndex < 0) {
+    // 锚点不在当前路径（切换分支、编辑早期消息）：摘要失效
+    updateSession(sessionId, (session) => ({ ...session, contextSummary: undefined }))
+    persist(sessionId)
+  }
+  const coveredCount = anchorIndex + 1
+  const summaryText = anchorIndex >= 0 ? (summary?.text ?? '') : ''
+  const withSummary = (text: string) =>
+    text ? [systemText, `${translate('contextSummaryLabel')}\n${text}`].join('\n') : systemText
+  const budget = contextBudget(useModels.getState().models.find((item) => item.id === model))
+  const fixedTokens =
+    estimateTextTokens(withSummary(summaryText)) +
+    MESSAGE_OVERHEAD +
+    estimateUserTokens(request.question) +
+    (request.prefix ? estimateTextTokens(getReplyText(request.prefix)) + MESSAGE_OVERHEAD : 0)
+  const windowTokens = window.reduce((sum, round) => sum + estimateRoundTokens(round), 0)
+  if (budget === null || fixedTokens + windowTokens <= budget) {
+    return { history: window.flat(), systemText: withSummary(summaryText) }
+  }
+  const boundary = planTrimBoundary(rounds, coveredCount, fixedTokens, budget)
+  const toCompress = rounds.slice(coveredCount, boundary)
+  if (toCompress.length === 0) {
+    // 窗口已无可压缩轮次：按原样发送，交给超限重试
+    return { history: window.flat(), systemText: withSummary(summaryText) }
+  }
+  showToast({ key: 'contextCompressingToast' })
+  const text = await compressRounds(apiKey, model, summaryText, toCompress, signal)
+  if (text === null) {
+    if (!signal.aborted) {
+      showToast({ key: 'contextCompressFailedToast' })
+    }
+    return { history: window.flat(), systemText: withSummary(summaryText) }
+  }
+  const anchorMessageId = rounds[boundary - 1][1].id
+  updateSession(sessionId, (session) => ({ ...session, contextSummary: { text, anchorMessageId } }))
+  persist(sessionId)
+  return { history: rounds.slice(boundary).flat(), systemText: withSummary(text) }
+}
+
+/**
+ * 请求并消费流：先按上下文预算裁剪压缩，再内联图片发请求；流式增量按动画帧刷新内存，
+ * 完成、失败或停止后落盘。模型发出 tool_calls（搜索/链接阅读）时由客户端执行并以 tool 消息
+ * 回传结果继续生成，最多 TOOL_ROUND_LIMIT 轮；超过按 tool_use 收尾。
+ * 上下文超限时机械裁剪原地重试。首轮完成后另发小请求补会话标题。
  */
 const streamReply = async (sessionId: string, initial: AssistantMessage, request: Request) => {
   const controller = new AbortController()
@@ -804,7 +912,6 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
   streamFlushes.set(sessionId, flush)
 
   try {
-    const imageData = await prepareImages(request, controller.signal)
     const apiKey = useSettings.getState().apiKey ?? ''
     const model = initial.model ?? DEFAULT_MODEL
     const systemPrompt = getSession(sessionId)?.systemPrompt ?? useSettings.getState().systemPrompt
@@ -816,17 +923,34 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
     updateReply(sessionId, reply)
     persist(sessionId)
     // latest_reminder 角色被网关拒绝，环境快照折进 system 消息
-    const systemText = [systemPrompt, latestReminder].filter(Boolean).join('\n')
-    let messages = toOpenAIMessages(
-      request.history,
+    const baseSystemText = [systemPrompt, latestReminder].filter(Boolean).join('\n')
+    const fitted = await fitContext(
+      sessionId,
+      request,
+      baseSystemText,
+      model,
+      apiKey,
+      controller.signal
+    )
+    const imageData = await prepareImages(
+      { ...request, history: fitted.history },
+      controller.signal
+    )
+    let baseMessages = toOpenAIMessages(
+      fitted.history,
       request.question,
-      systemText,
+      fitted.systemText,
       imageData,
       request.prefix
     )
+    let toolMessages: ChatMessageParam[] = []
+    let windowRounds = getContextRounds(fitted.history)
     const tools = searchTools(initial.search ?? false)
+    let overflowRetries = 0
 
-    for (let round = 0; ; round += 1) {
+    for (let round = 0; ; ) {
+      // 超限重试只丢弃本次请求的增量，保留此前已完成的工具调用与结果。
+      const roundStartReply = reply
       const toolCalls = new Map<number, ChatToolCall>()
       let roundText = ''
       try {
@@ -834,7 +958,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           apiKey,
           {
             model,
-            messages,
+            messages: [...baseMessages, ...toolMessages],
             stream: true,
             stream_options: { include_usage: true },
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
@@ -870,8 +994,8 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
             blocks: [...reply.blocks, ...executions.flatMap((execution) => execution.blocks)],
             stopReason: undefined,
           }
-          messages = [
-            ...messages,
+          toolMessages = [
+            ...toolMessages,
             { role: 'assistant', content: roundText || null, tool_calls: calls },
             ...executions.map((execution, index) => ({
               role: 'tool' as const,
@@ -880,6 +1004,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
             })),
           ]
           flush()
+          round += 1
           continue
         }
         reply = settleReply(reply, 'done', Date.now())
@@ -892,12 +1017,48 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
         if (error instanceof ApiError && error.kind === 'interrupted' && reply.stopReason) {
           // 已收到 finish_reason，只是缺了结尾的 [DONE]
           reply = settleReply(reply, 'done', Date.now())
-        } else if (error instanceof ApiError) {
+          break
+        }
+        if (isContextOverflowError(error) && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          overflowRetries += 1
+          // 窗口减半重建基础消息；锚点移到新边界（摘要文本不变，机械丢弃早期轮次）
+          if (windowRounds.length > 0) {
+            const allRounds = getContextRounds(request.history)
+            const keep = Math.floor(windowRounds.length / 2)
+            const boundary = Math.max(0, allRounds.length - keep)
+            windowRounds = allRounds.slice(boundary)
+            if (boundary > 0) {
+              const anchorMessageId = allRounds[boundary - 1][1].id
+              updateSession(sessionId, (session) => ({
+                ...session,
+                contextSummary: { text: session.contextSummary?.text ?? '', anchorMessageId },
+              }))
+              persist(sessionId)
+            }
+            baseMessages = toOpenAIMessages(
+              windowRounds.flat(),
+              request.question,
+              fitted.systemText,
+              imageData,
+              request.prefix
+            )
+          }
+          baseMessages = capToolContent(baseMessages)
+          toolMessages = capToolContent(toolMessages)
+          // 超限是请求级拒绝，只回滚本次请求的增量，从上一轮完成状态重发
+          reply = roundStartReply
+          flush()
+          showToast({ key: 'contextTrimmedRetryToast' })
+          continue
+        }
+        if (error instanceof ApiError) {
           reply = settleReply(reply, 'error', Date.now(), {
             kind: error.kind,
             message: error.message,
             status: error.status,
-            localMessage: error.localMessage,
+            localMessage: isContextOverflowError(error)
+              ? { key: 'replyContextOverflow' }
+              : error.localMessage,
           })
         } else {
           reply = settleReply(reply, 'error', Date.now(), {
@@ -929,7 +1090,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
         .catch(() => {})
     }
   } catch (error) {
-    // 图片读取阶段中止或意外错误
+    // 上下文压缩、图片读取阶段中止或意外错误
     if (controller.signal.aborted) {
       reply = settleReply(reply, 'stopped', Date.now())
     } else {
