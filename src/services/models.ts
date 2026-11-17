@@ -23,6 +23,10 @@ export const useModels = create<ModelsState>(() => ({
 const isChatModel = (info: ModelInfo) =>
   info.supported_endpoint_types === undefined || info.supported_endpoint_types.includes('openai')
 
+/** 展示按模型名称自然排序（版本号按数值比较），上游返回顺序不稳定 */
+const byId = (a: ModelInfo, b: ModelInfo) =>
+  a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' })
+
 /** 按模型的 reasoning_options 校正思考强度：优先 high，否则第一项；不支持强度时清空 */
 const reconcileEffort = (info: ModelInfo | undefined) => {
   const options = info?.reasoning_options
@@ -79,7 +83,7 @@ export const refreshModels = async () => {
       return
     }
     readyKey = apiKey
-    useModels.setState({ models: list, status: 'ready' })
+    useModels.setState({ models: list.sort(byId), status: 'ready' })
     reconcileSelection(list)
   } catch {
     if (seq !== refreshSeq) {

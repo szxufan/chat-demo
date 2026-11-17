@@ -8,7 +8,7 @@ import type {
 } from '../api/types.js'
 import { fetchUrl, searchWeb } from '../api/tools.js'
 import { callMcpTool } from '../mcp/client.js'
-import { extractMedia, nameFromUrl, persistRemoteMedia } from '../mcp/media.js'
+import { extractMedia, mediaKindOf, nameFromUrl, persistRemoteMedia } from '../mcp/media.js'
 import type { McpToolset } from '../mcp/tools.js'
 import { uploadMcpImage } from '../mcp/upload.js'
 import { isVideoSubmitTool, pollVideoTask, readVideoTask } from '../mcp/videoTask.js'
@@ -330,6 +330,21 @@ const executeMcpToolCall = async (
     }
     signal?.throwIfAborted()
     const { media, text } = await extractMedia(result.content, signal)
+    // 部分上游只回图片 URL 文本、不带媒体内容块：媒体生成类工具从文本地址补提取
+    if (
+      media.length === 0 &&
+      (originalName === 'generate_image' ||
+        isVideoSubmitTool(originalName) ||
+        originalName === 'get_video_task')
+    ) {
+      const urls = text.match(/https?:\/\/[^\s"'<>]+/g) ?? []
+      const classified = urls.find((url) => mediaKindOf(undefined, url) !== null)
+      const fallback = classified ?? (originalName === 'generate_image' ? urls[0] : undefined)
+      if (fallback) {
+        const kind = mediaKindOf(undefined, fallback) ?? 'image'
+        media.push(await persistRemoteMedia(fallback, kind, undefined, signal))
+      }
+    }
     // 视频任务的媒体地址在任务 JSON 里，不在 MCP 媒体内容块中
     if (isVideoSubmitTool(originalName) || originalName === 'get_video_task') {
       const task = readVideoTask(result)

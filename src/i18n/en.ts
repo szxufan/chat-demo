@@ -169,6 +169,8 @@ export const en = {
   search: 'Search',
   modelSelector: 'Model',
   modelSelectorPlaceholder: 'Select model',
+  modelSearchPlaceholder: 'Search models',
+  modelNoMatch: 'No matching models',
   modelSelectorLoading: 'Loading models...',
   modelListFailed: 'Failed to load models',
   modelListRetry: 'Click to retry loading models',

@@ -74,6 +74,9 @@ export const ModelSelector = () => {
       value={model ?? ''}
       placeholder={status === 'loading' ? t('modelSelectorLoading') : t('modelSelectorPlaceholder')}
       disabled={status !== 'ready'}
+      searchable
+      searchPlaceholder={t('modelSearchPlaceholder')}
+      noMatchText={t('modelNoMatch')}
       options={models.map((info) => ({
         value: info.id,
         label: info.id,

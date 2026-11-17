@@ -194,12 +194,13 @@ const readContent = (value: unknown): McpContent | null => {
   if (value.type === 'text' && typeof value.text === 'string') {
     return { type: 'text', text: value.text }
   }
-  if (
-    value.type === 'image' &&
-    typeof value.data === 'string' &&
-    typeof value.mimeType === 'string'
-  ) {
-    return { type: 'image', data: value.data, mimeType: value.mimeType }
+  if (value.type === 'image' && typeof value.data === 'string') {
+    // 个别上游缺省 mimeType，按 PNG 兜底，避免整块媒体被丢弃
+    return {
+      type: 'image',
+      data: value.data,
+      mimeType: typeof value.mimeType === 'string' ? value.mimeType : 'image/png',
+    }
   }
   if (value.type === 'resource_link' && typeof value.uri === 'string') {
     return {

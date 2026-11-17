@@ -4,6 +4,9 @@ declare const styles: {
   readonly "placeholder": string;
   readonly "arrow": string;
   readonly "menu": string;
+  readonly "menuList": string;
+  readonly "search": string;
+  readonly "empty": string;
   readonly "option": string;
   readonly "optionText": string;
   readonly "optionDescription": string;

@@ -157,6 +157,8 @@ export const zh = {
   search: '智能搜索',
   modelSelector: '模型',
   modelSelectorPlaceholder: '选择模型',
+  modelSearchPlaceholder: '搜索模型',
+  modelNoMatch: '无匹配模型',
   modelSelectorLoading: '模型加载中...',
   modelListFailed: '模型列表加载失败',
   modelListRetry: '点击重试加载模型列表',
