@@ -7,6 +7,7 @@ import type {
   FileObject,
   FilePurpose,
   MessageStreamEvent,
+  ModelInfo,
 } from './types.js'
 
 /** 构建期 API 地址，默认 https://new-api.test.mylinkpi.com；本地开发支持开发服务器代理 */
@@ -89,13 +90,54 @@ const anthropicHeaders = (apiKey: string, beta: boolean): Record<string, string>
   ...(beta ? { 'anthropic-beta': FILES_BETA } : {}),
 })
 
-/** 用 GET /models 校验 API Key（不产生费用） */
-export const verifyApiKey = async (apiKey: string, signal?: AbortSignal): Promise<void> => {
-  await request(`${API_ORIGIN}/models`, {
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string')
+
+/** 只收取展示与选择需要的字段；缺少有效 id 的条目整条丢弃 */
+const readModelInfo = (value: unknown): ModelInfo | null => {
+  if (typeof value !== 'object' || value === null) {
+    return null
+  }
+  const item = value as Record<string, unknown>
+  if (typeof item.id !== 'string' || item.id === '') {
+    return null
+  }
+  const info: ModelInfo = { id: item.id }
+  if (isStringList(item.supported_endpoint_types)) {
+    info.supported_endpoint_types = item.supported_endpoint_types
+  }
+  if (typeof item.context_length === 'number') {
+    info.context_length = item.context_length
+  }
+  if (typeof item.max_output_tokens === 'number') {
+    info.max_output_tokens = item.max_output_tokens
+  }
+  if (typeof item.support_image_input === 'boolean') {
+    info.support_image_input = item.support_image_input
+  }
+  if (typeof item.support_video_input === 'boolean') {
+    info.support_video_input = item.support_video_input
+  }
+  if (isStringList(item.reasoning_options)) {
+    info.reasoning_options = item.reasoning_options
+  }
+  return info
+}
+
+/** 用 GET /v1/models 校验 API Key 并拉取模型列表（不产生费用） */
+export const fetchModels = async (apiKey: string, signal?: AbortSignal): Promise<ModelInfo[]> => {
+  const response = await request(`${API_ORIGIN}/v1/models`, {
     method: 'GET',
     headers: { Authorization: `Bearer ${apiKey}` },
     signal,
   })
+  const body: unknown = await response.json().catch(() => null)
+  if (typeof body !== 'object' || body === null || !Array.isArray((body as { data?: unknown }).data)) {
+    throw new ApiError('protocol', 'Unexpected /v1/models response')
+  }
+  return (body as { data: unknown[] }).data
+    .map(readModelInfo)
+    .filter((info): info is ModelInfo => info !== null)
 }
 
 /**

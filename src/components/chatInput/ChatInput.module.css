@@ -297,6 +297,33 @@
   }
 }
 
+/* 工具栏内的 Select（模型 / 思考强度）对齐 toggle 胶囊样式；嵌套提升优先级以覆盖 Select 默认触发器 */
+.toggles .toolbarSelect {
+  flex-shrink: 1;
+  min-width: 48px;
+  max-width: 200px;
+  height: 34px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background-color: transparent;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+
+  &:hover:not(:disabled) {
+    background-color: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  > span:last-child {
+    right: 10px;
+  }
+}
+
 .right {
   display: flex;
   flex-shrink: 0;

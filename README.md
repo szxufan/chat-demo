@@ -70,7 +70,7 @@ Settings → Data → Delete all chats clears all local conversations, original 
 
 [rspack.config.ts](rspack.config.ts) uses `https://new-api.test.mylinkpi.com` by default. The `API_ORIGIN` environment variable overrides it at build time, and `createConfig({ apiOrigin, devServer })` customizes the API origin and development server proxy.
 
-Chat uses `deepseek-flash` by default through Anthropic-compatible Messages / Files APIs. Speech features use ASR / TTS endpoints. Requests include extensions for search, link reading, titles, and `latest_reminder`, so the configured service must support the corresponding capabilities. Supported attachment formats are determined by server-side validation.
+The chat model list is fetched from the upstream `GET /v1/models` endpoint (chat-capable models only) and can be switched from the input toolbar; when deep thinking is enabled, models that expose reasoning levels also offer a thinking-effort selector (`output_config.effort`). Chat runs through Anthropic-compatible Messages / Files APIs. Speech features use ASR / TTS endpoints. Requests include extensions for search, link reading, titles, and `latest_reminder`, so the configured service must support the corresponding capabilities. Supported attachment formats are determined by server-side validation.
 
 ```text
 src/

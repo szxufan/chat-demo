@@ -5,5 +5,7 @@ declare const styles: {
   readonly "arrow": string;
   readonly "menu": string;
   readonly "option": string;
+  readonly "optionText": string;
+  readonly "optionDescription": string;
 };
 export = styles;

@@ -5,7 +5,13 @@ import { useAnchoredPosition, useDismiss } from './anchored.js'
 import { IconCheckOutline16, IconChevronDownOutline14 } from './icons.js'
 import styles from './Select.module.css'
 
-export type SelectOption<T extends string> = { value: T; label: string; lang?: string }
+export type SelectOption<T extends string> = {
+  value: T
+  label: string
+  lang?: string
+  /** 选项内的次要说明文字，显示在 label 下方 */
+  description?: string
+}
 
 /**
  * 胶囊形选择器：触发器高 36px、圆角 18px、浅灰底，下拉菜单选中项右侧打勾；
@@ -80,7 +86,12 @@ export const Select = <T extends string>({
                     onChange(option.value)
                   }}
                 >
-                  <span>{option.label}</span>
+                  <span className={styles.optionText}>
+                    <span>{option.label}</span>
+                    {option.description ? (
+                      <span className={styles.optionDescription}>{option.description}</span>
+                    ) : null}
+                  </span>
                   {option.value === value ? <IconCheckOutline16 /> : null}
                 </div>
               ))}

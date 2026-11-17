@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { ApiError, verifyApiKey } from '../../services/api/client.js'
+import { ApiError, fetchModels } from '../../services/api/client.js'
 import { classifyApiError } from '../../services/api/errors.js'
 import { setApiKey } from '../../services/settings.js'
 import { useTranslate } from '../../i18n/index.js'
 
-/** 输入 API Key 后先用 GET /models 校验，通过才保存 */
+/** 输入 API Key 后先用 GET /v1/models 校验，通过才保存；模型列表由 apiKey 变化订阅自动刷新 */
 export const useApiKeyForm = (onSaved?: () => void) => {
   const t = useTranslate()
   const [value, setValue] = useState('')
@@ -35,7 +35,7 @@ export const useApiKeyForm = (onSaved?: () => void) => {
     setVerifying(true)
     setFailure(null)
     try {
-      await verifyApiKey(apiKey)
+      await fetchModels(apiKey)
       setApiKey(apiKey)
       setValue('')
       onSaved?.()

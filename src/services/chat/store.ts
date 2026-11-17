@@ -32,8 +32,8 @@ import {
   type UserMessage,
 } from './types.js'
 
-/** deepseek-flash 同时支持深度思考与图片输入 */
-const MODEL: ChatModel = 'deepseek-flash'
+/** 模型列表来自上游 GET /v1/models；此值仅在列表不可用时兜底 */
+const DEFAULT_MODEL: ChatModel = 'deepseek-v4-flash'
 /** 保留最近打开的详情；当前会话、生成中及尚未成功保存的会话不淘汰。 */
 const SESSION_CACHE_LIMIT = 5
 /** 安全审核固定开启，所有请求都走扩展模式 */
@@ -251,15 +251,16 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前开关创建回复：深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+/** 按当前设置创建回复：模型与思考强度取全局选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
 const createReply = (): AssistantMessage => {
-  const { thinking, search } = useSettings.getState()
+  const { thinking, search, model, thinkingEffort } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
     createdAt: Date.now(),
-    model: MODEL,
+    model: model ?? DEFAULT_MODEL,
     thinking,
+    effort: thinkingEffort ?? undefined,
     search,
     prefix: true,
     status: 'pending',
@@ -735,12 +736,13 @@ export const continueReply = (sessionId: string, messageId: string) => {
   ) {
     return
   }
-  const { thinking, search } = useSettings.getState()
+  const { thinking, search, thinkingEffort } = useSettings.getState()
   const reply: AssistantMessage = {
     ...previous,
     // 未记录请求配置的回复，续写时使用默认模型和当前开关。
-    model: previous.model ?? MODEL,
+    model: previous.model ?? DEFAULT_MODEL,
     thinking: previous.thinking ?? thinking,
+    effort: previous.effort ?? thinkingEffort ?? undefined,
     search: previous.search ?? search,
     status: 'pending',
     stopReason: undefined,
@@ -1029,10 +1031,14 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
         const events = streamMessage(
           useSettings.getState().apiKey ?? '',
           {
-            model: initial.model ?? MODEL,
+            model: initial.model ?? DEFAULT_MODEL,
             system: getSession(sessionId)?.systemPrompt ?? useSettings.getState().systemPrompt,
             messages,
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
+            // 思考强度仅在开启思考且有记录时下发；显式 thinking.type 优先决定开关
+            ...(initial.thinking && initial.effort
+              ? { output_config: { effort: initial.effort } }
+              : {}),
             safety_check: SAFETY_CHECK,
             tools: serverTools(initial.search ?? false),
             ...(titleRequests.has(controller) ? { title: { enabled: true } } : {}),

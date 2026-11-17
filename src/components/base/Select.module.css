@@ -98,3 +98,15 @@
     background: var(--dsw-alias-interactive-bg-hover);
   }
 }
+
+.optionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.optionDescription {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}

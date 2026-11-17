@@ -10,7 +10,7 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 /** 未自定义系统提示词时使用的助手身份说明 */
 export const DEFAULT_SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 
-/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、深度思考与智能搜索开关、侧边栏收起状态 */
+/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、模型与思考强度、深度思考与智能搜索开关、侧边栏收起状态 */
 type Settings = {
   apiKey: string | null
   locale: Locale
@@ -18,6 +18,10 @@ type Settings = {
   location: UserLocation | null
   ttsVoice: TtsVoice
   systemPrompt: string
+  /** 所选模型 id；null 表示未选择，由模型列表服务按上游列表确定默认值 */
+  model: string | null
+  /** 思考强度级别；null 表示未选择，按当前模型的 reasoning_options 确定默认值 */
+  thinkingEffort: string | null
   thinking: boolean
   search: boolean
   siderCollapsed: boolean
@@ -30,6 +34,8 @@ const KEYS = {
   themePreference: 'chat-demo:theme-preference',
   ttsVoice: 'chat-demo:tts-voice',
   systemPrompt: 'chat-demo:system-prompt',
+  model: 'chat-demo:model',
+  thinkingEffort: 'chat-demo:thinking-effort',
   thinking: 'chat-demo:thinking',
   search: 'chat-demo:search',
   siderCollapsed: 'chat-demo:sider-collapsed',
@@ -99,6 +105,8 @@ export const useSettings = create<Settings>(() => ({
   themePreference: initialThemePreference(),
   ttsVoice: initialTtsVoice(),
   systemPrompt: read(KEYS.systemPrompt) ?? DEFAULT_SYSTEM_PROMPT,
+  model: read(KEYS.model),
+  thinkingEffort: read(KEYS.thinkingEffort),
   thinking: read(KEYS.thinking) === 'true',
   search: read(KEYS.search) === 'true',
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
@@ -133,6 +141,16 @@ export const setApiKey = (apiKey: string | null) => {
 export const setSystemPrompt = (systemPrompt: string) => {
   write(KEYS.systemPrompt, systemPrompt)
   useSettings.setState({ systemPrompt })
+}
+
+export const setModel = (model: string | null) => {
+  write(KEYS.model, model)
+  useSettings.setState({ model })
+}
+
+export const setThinkingEffort = (thinkingEffort: string | null) => {
+  write(KEYS.thinkingEffort, thinkingEffort)
+  useSettings.setState({ thinkingEffort })
 }
 
 export const setThinking = (thinking: boolean) => {

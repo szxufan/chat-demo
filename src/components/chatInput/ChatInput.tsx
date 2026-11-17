@@ -25,6 +25,7 @@ import { IconButton } from '../base/IconButton.js'
 import { Tooltip } from '../base/Tooltip.js'
 import { ensureApiKey } from '../settings/settingsDialogState.js'
 import { DragMask, useFileDrop } from './DragMask.js'
+import { ModelSelector, ThinkingEffortSelector } from './ModelControls.js'
 import { showToast } from '../base/toastState.js'
 import { ACCEPT, useUploads } from '../../services/attachments.js'
 import { DraftAttachments } from './DraftAttachments.js'
@@ -200,8 +201,9 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
         </div>
       </div>
       <div className={styles.functionRow}>
-        {/* 深度思考 / 智能搜索开关，tooltip 在按钮上方 */}
+        {/* 模型 / 深度思考 / 思考强度 / 智能搜索开关，tooltip 在按钮上方 */}
         <div ref={togglesRef} className={styles.toggles}>
+          <ModelSelector />
           <Tooltip content={t('deactivatedThinkTooltip')}>
             <button
               type="button"
@@ -214,6 +216,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
               <span className={styles.toggleLabel}>{t('thinkingSwitch')}</span>
             </button>
           </Tooltip>
+          <ThinkingEffortSelector />
           <Tooltip content={t('deactivatedSearchTooltip')}>
             <button
               type="button"
