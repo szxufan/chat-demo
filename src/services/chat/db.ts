@@ -123,6 +123,34 @@ export const renameSession = async (id: string, title: string): Promise<void> =>
   ])
 }
 
+/** 未打开的会话也可设置系统提示词；摘要不变，只更新详情。undefined 表示清除覆盖。 */
+export const setSessionSystemPrompt = async (
+  id: string,
+  systemPrompt: string | undefined
+): Promise<void> => {
+  const tx = (await getDB()).transaction(['sessions'], 'readwrite')
+  await Promise.all([
+    (async () => {
+      try {
+        const sessions = tx.objectStore('sessions')
+        const session = await sessions.get(id)
+        if (session) {
+          if (systemPrompt === undefined) {
+            delete session.systemPrompt
+          } else {
+            session.systemPrompt = systemPrompt
+          }
+          await sessions.put(session)
+        }
+      } catch (error) {
+        abortTransaction(tx)
+        throw error
+      }
+    })(),
+    tx.done,
+  ])
+}
+
 /** 删除会话，仅清理已无会话引用的本地原件；远端文件不删。 */
 export const deleteSession = async (sessionId: string): Promise<void> => {
   const tx = (await getDB()).transaction(['sessions', 'sessionSummaries', 'files'], 'readwrite')

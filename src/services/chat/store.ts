@@ -34,8 +34,6 @@ import {
 
 /** deepseek-flash 同时支持深度思考与图片输入 */
 const MODEL: ChatModel = 'deepseek-flash'
-/** 所有生成请求统一携带的助手身份说明 */
-const SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 /** 保留最近打开的详情；当前会话、生成中及尚未成功保存的会话不淘汰。 */
 const SESSION_CACHE_LIMIT = 5
 /** 安全审核固定开启，所有请求都走扩展模式 */
@@ -475,6 +473,38 @@ export const renameSession = (id: string, title: string) => {
     }))
     void db.renameSession(id, title).catch(db.reportStorageError('rename session'))
   }
+}
+
+/** 设置会话级系统提示词；undefined 表示清除覆盖、跟随全局设置。 */
+export const setSessionSystemPrompt = (id: string, systemPrompt: string | undefined) => {
+  if (get().importingHistory || deletingSessions.has(id)) {
+    return
+  }
+  if (getSession(id)) {
+    updateSession(id, (session) => {
+      const next = { ...session }
+      if (systemPrompt === undefined) {
+        delete next.systemPrompt
+      } else {
+        next.systemPrompt = systemPrompt
+      }
+      return next
+    })
+    persist(id)
+  } else {
+    void db
+      .setSessionSystemPrompt(id, systemPrompt)
+      .catch(db.reportStorageError('set session system prompt'))
+  }
+}
+
+/** 读取会话的系统提示词覆盖；详情未缓存时先加载，null 表示读取失败。 */
+export const readSessionSystemPrompt = async (
+  id: string
+): Promise<{ systemPrompt?: string } | null> => {
+  await ensureSessionLoaded(id)
+  const session = getSession(id)
+  return session ? { systemPrompt: session.systemPrompt } : null
 }
 
 /**
@@ -1000,7 +1030,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           useSettings.getState().apiKey ?? '',
           {
             model: initial.model ?? MODEL,
-            system: SYSTEM_PROMPT,
+            system: getSession(sessionId)?.systemPrompt ?? useSettings.getState().systemPrompt,
             messages,
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
             safety_check: SAFETY_CHECK,

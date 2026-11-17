@@ -114,6 +114,8 @@ export type Session = {
   messages: Message[]
   /** undefined 表示线性消息列表；null 表示空会话。 */
   rootMessageId?: string | null
+  /** 会话级系统提示词覆盖；undefined 表示跟随全局设置，空字符串表示不使用系统提示词。 */
+  systemPrompt?: string
 }
 
 /** 会话列表元数据；消息只在打开会话时加载。 */

@@ -33,6 +33,8 @@ export type SessionFile = {
   current_message_id: number
   inserted_at: Iso8601Utc
   updated_at: Iso8601Utc
+  /** 会话级系统提示词覆盖；缺省表示跟随全局设置 */
+  system_prompt?: string
   /** 消息树，分支靠 parent_id */
   messages: ChatMessage[]
 }

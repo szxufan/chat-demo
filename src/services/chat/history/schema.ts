@@ -258,6 +258,7 @@ export const readSessionFile: Read<SessionFile> = (value) => {
     current_message_id: count(item.current_message_id),
     inserted_at: time(item.inserted_at),
     updated_at: time(item.updated_at),
+    ...('system_prompt' in item ? { system_prompt: string(item.system_prompt) } : {}),
     messages: list(message)(item.messages),
   }
 }

@@ -264,6 +264,7 @@ export const toSessionFile = (original: Session, exportImage: ExportImage): Sess
     current_message_id: current ? id(current) : 0,
     inserted_at: iso(session.createdAt),
     updated_at: iso(session.updatedAt),
+    ...(session.systemPrompt !== undefined ? { system_prompt: session.systemPrompt } : {}),
     messages,
   }
 }

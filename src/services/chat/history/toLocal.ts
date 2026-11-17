@@ -286,6 +286,7 @@ export const toLocalSession = (file: SessionFile): LocalSession => {
     title: file.title ?? '',
     createdAt: time(file.inserted_at),
     updatedAt: time(file.updated_at),
+    ...(file.system_prompt !== undefined ? { systemPrompt: file.system_prompt } : {}),
     ...buildTree(file),
   }
   const images = new Map<string, string>()

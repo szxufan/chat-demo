@@ -21,6 +21,12 @@ export const en = {
   cancel: 'Cancel',
   delete: 'Delete',
   sessionItemMenuRenameOption: 'Rename',
+  sessionItemMenuSystemPromptOption: 'System prompt',
+  sessionPromptModalTitle: 'Chat system prompt',
+  sessionPromptFollowGlobal: 'Follow global setting',
+  sessionPromptDescription:
+    'Set a system prompt for this chat only. Leave it empty to send no system prompt.',
+  sessionPromptPlaceholder: 'Enter system prompt',
   more: 'More',
   close: 'Close',
   sessionHistoryTimelineLabelToday: 'Today',
@@ -97,6 +103,9 @@ export const en = {
   settingsLocationProvince: 'Select province/region',
   settingsLocationCity: 'Select city',
   settingsLocationRegion: 'Select country or region',
+  settingsSystemPrompt: 'System prompt',
+  settingsSystemPromptDescription:
+    'Defines the role and behavior of the assistant for all chats. Individual chats can override it from the chat menu.',
   settingDialogAsideGeneralOptionLabel: 'General',
   settingDialogAsideDataOptionLabel: 'Data',
   avatarMenuSettingsDialogThemeItemLabel: 'Theme',

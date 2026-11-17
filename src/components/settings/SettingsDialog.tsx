@@ -22,6 +22,7 @@ import {
   isChineseBrowser,
   setLocale,
   setLocation,
+  setSystemPrompt,
   setThemePreference,
   setTtsVoice,
   useSettings,
@@ -37,7 +38,7 @@ import { closeSettings, useSettingsDialog, type SettingsSection } from './settin
 import styles from './Settings.module.css'
 
 /**
- * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置）与「数据管理」（API Key、导入、导出、删除）。
+ * 设置弹窗：分「通用设置」（主题、语言、朗读音色、位置、系统提示词）与「数据管理」（API Key、导入、导出、删除）。
  * 桌面端为居中弹窗、左侧导航；移动端为底部弹层、导航横排在内容上方
  */
 export const SettingsDialog = () => {
@@ -100,6 +101,7 @@ const SettingsContent = () => {
               <LocaleSetting />
               <TtsVoiceSetting />
               <LocationSetting />
+              <SystemPromptSetting />
             </>
           ) : (
             <>
@@ -311,6 +313,29 @@ const TtsVoiceSetting = () => {
         />
       }
     />
+  )
+}
+
+/** 系统提示词：全局生效，单个会话可在会话菜单中覆盖；输入即保存。 */
+const SystemPromptSetting = () => {
+  const t = useTranslate()
+  const systemPrompt = useSettings((state) => state.systemPrompt)
+  return (
+    <div className={styles.cell}>
+      <div className={styles.systemPrompt}>
+        <div className={styles.label}>{t('settingsSystemPrompt')}</div>
+        <div className={styles.description}>{t('settingsSystemPromptDescription')}</div>
+        <textarea
+          className={styles.systemPromptInput}
+          aria-label={t('settingsSystemPrompt')}
+          placeholder={t('sessionPromptPlaceholder')}
+          rows={3}
+          spellCheck={false}
+          value={systemPrompt}
+          onChange={(event) => setSystemPrompt(event.target.value)}
+        />
+      </div>
+    </div>
   )
 }
 

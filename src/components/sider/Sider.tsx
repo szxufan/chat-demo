@@ -13,6 +13,7 @@ import { showToast } from '../base/toastState.js'
 import { openSettings } from '../settings/settingsDialogState.js'
 import { closeMobileSider, useMobileSider } from './mobileSiderState.js'
 import { SessionItem } from './SessionItem.js'
+import { SessionPromptModal } from './SessionPromptModal.js'
 import styles from './Sider.module.css'
 
 /** 展开的侧边栏：名称与收起按钮、开启新对话、按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
@@ -24,6 +25,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   const groups = useMemo(() => groupSessions(sessions, now, t), [sessions, now, t])
   const [deleting, setDeleting] = useState<SessionSummary | null>(null)
   const [deletePending, setDeletePending] = useState(false)
+  const [promptEditing, setPromptEditing] = useState<SessionSummary | null>(null)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
@@ -85,6 +87,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
                   session={session}
                   active={session.id === activeId}
                   onDelete={() => setDeleting(session)}
+                  onEditPrompt={() => setPromptEditing(session)}
                 />
               ))}
             </div>
@@ -135,6 +138,12 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         >
           {t('deleteSessionWithFilesDescription')}
         </Modal>
+      ) : null}
+      {promptEditing ? (
+        <SessionPromptModal
+          sessionId={promptEditing.id}
+          onClose={() => setPromptEditing(null)}
+        />
       ) : null}
     </div>
   )
