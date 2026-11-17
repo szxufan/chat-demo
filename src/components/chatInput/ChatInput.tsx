@@ -4,10 +4,11 @@ import {
   IconGlobeLanguageOutline14,
   IconPaperclipOutline16,
   IconSendOutline16,
+  IconSparkleOutline14,
   IconStopFill16,
   IconThinkOutline14,
 } from '../base/icons.js'
-import { setSearch, setThinking, useSettings } from '../../services/settings.js'
+import { setMcp, setSearch, setThinking, useSettings } from '../../services/settings.js'
 import { useIsMobile } from '../../app/viewport.js'
 import { sendMessage, stopReply, useChatStore } from '../../services/chat/store.js'
 import {
@@ -53,6 +54,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const importingHistory = useChatStore((state) => state.importingHistory)
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
+  const mcp = useSettings((state) => state.mcp)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const togglesRef = useRef<HTMLDivElement>(null)
@@ -218,6 +220,18 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
             >
               <IconGlobeLanguageOutline14 />
               <span className={styles.toggleLabel}>{t('search')}</span>
+            </button>
+          </Tooltip>
+          <Tooltip content={t('mcpToolsTooltip')}>
+            <button
+              type="button"
+              className={clsx(styles.toggle, mcp && styles.selected)}
+              aria-label={t('mcpTools')}
+              aria-pressed={mcp}
+              onClick={() => setMcp(!mcp)}
+            >
+              <IconSparkleOutline14 />
+              <span className={styles.toggleLabel}>{t('mcpTools')}</span>
             </button>
           </Tooltip>
         </div>

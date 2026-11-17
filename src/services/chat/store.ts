@@ -30,6 +30,7 @@ import {
   prepareDraftMessage,
 } from './drafts.js'
 import { createLatestReminder } from './latestReminder.js'
+import { getMcpToolset, type McpToolset } from '../mcp/tools.js'
 import {
   applyChunk,
   canContinueReply,
@@ -39,7 +40,7 @@ import {
   settleReply,
   toOpenAIMessages,
 } from './reply.js'
-import { executeToolCall, searchTools } from './tools.js'
+import { executeToolCall, searchTools, type McpExecution } from './tools.js'
 import {
   toSessionSummary,
   type AssistantMessage,
@@ -57,6 +58,8 @@ const SESSION_CACHE_LIMIT = 5
 const SAFETY_CHECK = { level: 'high' } as const
 /** 客户端工具循环（搜索/链接阅读）最多轮数；超过按 tool_use 收尾，禁止续写 */
 const TOOL_ROUND_LIMIT = 5
+/** 启用 MCP 时的轮数上限：图片生成/编辑链可能更长；视频轮询在客户端内完成，不占轮数 */
+const MCP_TOOL_ROUND_LIMIT = 8
 /** 上下文超限后的原地重试次数；每次窗口减半并截断工具结果 */
 const MAX_OVERFLOW_RETRIES = 2
 /** 超限重试时工具结果内容的字符上限 */
@@ -259,9 +262,9 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前设置创建回复：模型与思考强度取全局选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+/** 按当前设置创建回复：模型与思考强度取全局选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search，MCP 开关控制外部工具。 */
 const createReply = (): AssistantMessage => {
-  const { thinking, search, model, thinkingEffort } = useSettings.getState()
+  const { thinking, search, model, thinkingEffort, mcp } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
@@ -270,6 +273,7 @@ const createReply = (): AssistantMessage => {
     thinking,
     effort: thinkingEffort ?? undefined,
     search,
+    mcp,
     prefix: true,
     status: 'pending',
     blocks: [],
@@ -744,7 +748,7 @@ export const continueReply = (sessionId: string, messageId: string) => {
   ) {
     return
   }
-  const { thinking, search, thinkingEffort } = useSettings.getState()
+  const { thinking, search, thinkingEffort, mcp } = useSettings.getState()
   const reply: AssistantMessage = {
     ...previous,
     // 未记录请求配置的回复，续写时使用默认模型和当前开关。
@@ -752,6 +756,7 @@ export const continueReply = (sessionId: string, messageId: string) => {
     thinking: previous.thinking ?? thinking,
     effort: previous.effort ?? thinkingEffort ?? undefined,
     search: previous.search ?? search,
+    mcp: previous.mcp ?? mcp,
     status: 'pending',
     stopReason: undefined,
     stopDetails: undefined,
@@ -941,11 +946,45 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
       request.question,
       fitted.systemText,
       imageData,
-      request.prefix
+      request.prefix,
+      initial.mcp ?? false
     )
     let toolMessages: ChatMessageParam[] = []
     let windowRounds = getContextRounds(fitted.history)
-    const tools = searchTools(initial.search ?? false)
+    // MCP 工具动态发现；失败不阻塞聊天，提示后按普通工具声明发送。
+    let mcpToolset: McpToolset | null = null
+    if (initial.mcp) {
+      try {
+        mcpToolset = await getMcpToolset(apiKey, controller.signal)
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw error
+        }
+        showToast({ key: 'mcpUnavailableToast' })
+      }
+    }
+    const tools = [...searchTools(initial.search ?? false), ...(mcpToolset?.tools ?? [])]
+    const roundLimit = mcpToolset ? MCP_TOOL_ROUND_LIMIT : TOOL_ROUND_LIMIT
+    const mcpExecution: McpExecution | undefined = mcpToolset
+      ? {
+          route: mcpToolset.route,
+          onCallBlock: (block) => {
+            reply = { ...reply, blocks: [...reply.blocks, block] }
+            flush()
+          },
+          onProgress: (toolUseId, progress) => {
+            reply = {
+              ...reply,
+              blocks: reply.blocks.map((block) =>
+                block.type === 'mcp_tool_use' && block.id === toolUseId
+                  ? { ...block, progress }
+                  : block
+              ),
+            }
+            flush()
+          },
+        }
+      : undefined
     let overflowRetries = 0
 
     for (let round = 0; ; ) {
@@ -985,9 +1024,9 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           }
         }
         const calls = [...toolCalls.values()].filter((call) => call.id && call.function.name)
-        if (reply.stopReason === 'tool_use' && calls.length > 0 && round < TOOL_ROUND_LIMIT) {
+        if (reply.stopReason === 'tool_use' && calls.length > 0 && round < roundLimit) {
           const executions = await Promise.all(
-            calls.map((call) => executeToolCall(apiKey, call, controller.signal))
+            calls.map((call) => executeToolCall(apiKey, call, controller.signal, mcpExecution))
           )
           reply = {
             ...reply,
@@ -1040,7 +1079,8 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
               request.question,
               fitted.systemText,
               imageData,
-              request.prefix
+              request.prefix,
+              initial.mcp ?? false
             )
           }
           baseMessages = capToolContent(baseMessages)

@@ -523,3 +523,52 @@ export const IconToastError16 = () => (
     />
   </svg>
 )
+
+/** MCP 工具开关：大小两颗星芒，表示生成能力 */
+export const IconSparkleOutline14 = () => (
+  <svg width={14} height={14} viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M6 0.8c0.3 2.6 1.6 3.9 4.2 4.2-2.6 0.3-3.9 1.6-4.2 4.2-0.3-2.6-1.6-3.9-4.2-4.2 2.6-0.3 3.9-1.6 4.2-4.2zM10.8 8.2c0.17 1.2 0.83 1.86 2.03 2.03-1.2 0.17-1.86 0.83-2.03 2.03-0.17-1.2-0.83-1.86-2.03-2.03 1.2-0.17 1.86-0.83 2.03-2.03z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
+/** 图片工具行：相框 + 山形与太阳 */
+export const IconPhotoOutline16 = () => (
+  <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M1.5 3.5a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9zm1.2 0.2v8.6h10.6V3.7H2.7z"
+      fill="currentColor"
+    />
+    <path
+      d="M5.4 5.2a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3zM3.2 11.6l2.9-3.1 1.9 1.9 2.4-2.9 2.4 4.1H3.2z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
+/** 视频工具行：屏幕 + 播放三角 */
+export const IconVideoOutline16 = () => (
+  <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M1.5 4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4zm1.2 0.2v7.6h10.6V4.2H2.7z"
+      fill="currentColor"
+    />
+    <path d="M6.6 5.9l4 2.1-4 2.1V5.9z" fill="currentColor" />
+  </svg>
+)
+
+/** 通用工具行：四宫格 */
+export const IconAppsFill16 = () => (
+  <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="2" width="5.2" height="5.2" rx="1" fill="currentColor" />
+    <rect x="8.8" y="2" width="5.2" height="5.2" rx="1" fill="currentColor" />
+    <rect x="2" y="8.8" width="5.2" height="5.2" rx="1" fill="currentColor" />
+    <rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1" fill="currentColor" />
+  </svg>
+)

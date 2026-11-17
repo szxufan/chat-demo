@@ -38,7 +38,13 @@ const storedSummary = (session: Session): StoredSessionSummary => ({
   fileIds: [
     ...new Set(
       session.messages.flatMap((message) =>
-        message.role === 'user' ? message.files.map((file) => file.id) : []
+        message.role === 'user'
+          ? message.files.map((file) => file.id)
+          : message.blocks.flatMap((block) =>
+              block.type === 'mcp_tool_result'
+                ? block.media.flatMap((media) => (media.fileId ? [media.fileId] : []))
+                : []
+            )
       )
     ),
   ],

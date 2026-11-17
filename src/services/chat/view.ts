@@ -6,7 +6,7 @@ import type {
   WebSearchResult,
   WebSearchToolResultBlock,
 } from '../api/types.js'
-import type { AssistantMessage, ThinkingPart } from './types.js'
+import type { AssistantMessage, McpMedia, McpToolResultBlock, ThinkingPart } from './types.js'
 
 /**
  * 由回复的内容块推导界面需要的结构：思考与工具步骤的时间线、带引用角标的正文、可引用的来源列表。
@@ -66,7 +66,29 @@ export type ThinkingStep = { type: 'thinking'; key: string; blocks: ThinkingPart
 /** 工具调用前输出的说明文字 */
 export type PreambleStep = { type: 'text'; key: string; markdown: string }
 
-export type Step = SearchStep | OpenStep | FindStep | ReadLinkStep | ThinkingStep | PreambleStep
+/** MCP 工具调用步骤：文生图/图片编辑/视频生成等，媒体在结果块中 */
+export type McpToolStep = {
+  type: 'mcp_tool'
+  key: string
+  name: string
+  status: ToolStatus
+  /** 视频任务进度（如 "50%"） */
+  progress?: string
+  media: McpMedia[]
+  /** 结果文本（JSON），失败时用于展示错误 */
+  message: string
+  startedAt?: number
+  endedAt?: number
+}
+
+export type Step =
+  | SearchStep
+  | OpenStep
+  | FindStep
+  | ReadLinkStep
+  | ThinkingStep
+  | PreambleStep
+  | McpToolStep
 
 export type ReplyView = {
   steps: Step[]
@@ -175,9 +197,12 @@ const joinTextBlocks = (
 
 export const buildReplyView = (reply: AssistantMessage, streaming: boolean): ReplyView => {
   const results = new Map<string, WebSearchToolResultBlock | WebFetchToolResultBlock>()
+  const mcpResults = new Map<string, McpToolResultBlock>()
   for (const block of reply.blocks) {
     if (block.type === 'web_search_tool_result' || block.type === 'web_fetch_tool_result') {
       results.set(block.tool_use_id, block)
+    } else if (block.type === 'mcp_tool_result') {
+      mcpResults.set(block.tool_use_id, block)
     }
   }
 
@@ -244,6 +269,32 @@ export const buildReplyView = (reply: AssistantMessage, streaming: boolean): Rep
         mergedThinking = { type: 'thinking', key: `thinking-${index}`, blocks: [block] }
         steps.push(mergedThinking)
       }
+      return
+    }
+    if (block.type === 'mcp_tool_result') {
+      return
+    }
+    if (block.type === 'mcp_tool_use') {
+      flushPreamble()
+      const result = mcpResults.get(block.id)
+      const status: ToolStatus = result
+        ? result.isError
+          ? 'failed'
+          : 'done'
+        : streaming
+          ? 'wip'
+          : 'failed'
+      steps.push({
+        type: 'mcp_tool',
+        key: block.id,
+        name: block.name,
+        status,
+        progress: block.progress,
+        media: result?.media ?? [],
+        message: result?.message ?? '',
+        startedAt: block.startedAt,
+        endedAt: result?.endedAt,
+      })
       return
     }
     if (block.type !== 'server_tool_use') {
@@ -395,6 +446,15 @@ export const getAreaTitle = (
   }
   if (last?.type === 'read_link' && last.links.some((link) => link.status === 'wip')) {
     return translate('readingLink')
+  }
+  if (last?.type === 'mcp_tool' && last.status === 'wip') {
+    return translate(
+      last.name.startsWith('generate_video')
+        ? 'mcpVideoGenerating'
+        : last.name === 'generate_image'
+          ? 'mcpImageGenerating'
+          : 'mcpToolRunning'
+    )
   }
   return translate('messageThinking')
 }

@@ -1,6 +1,6 @@
 import { useTranslate } from '../../i18n/index.js'
 import clsx from 'clsx'
-import { memo, useEffect, useState, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import {
   IconBrowseOutline16,
   IconBrowseWarningOutline16,
@@ -32,21 +32,10 @@ import { Tooltip } from '../base/Tooltip.js'
 import { Markdown } from '../markdown/Markdown.js'
 import { SiteThumbnails } from '../search/SiteLogo.js'
 import { toggleSearchPanel, useSearchPanel } from '../search/searchPanelState.js'
+import { McpToolRow } from './McpToolRow.js'
+import { useTicker } from './useTicker.js'
 import styles from './ReplyArea.module.css'
 import './thinking.markdown.css'
-
-/** 进行中时每秒刷新，用于思考用时与搜索词轮播 */
-const useTicker = (active: boolean, interval: number) => {
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!active) {
-      return
-    }
-    const timer = setInterval(() => setTick((value) => value + 1), interval)
-    return () => clearInterval(timer)
-  }, [active, interval])
-  return tick
-}
 
 /**
  * 思考与工具步骤的时间线：
@@ -105,7 +94,10 @@ export const ReplyArea = memo(function ReplyArea({
 })
 
 const stepKey = (step: Step, index: number) =>
-  step.type === 'thinking' || step.type === 'text' || step.type === 'search'
+  step.type === 'thinking' ||
+  step.type === 'text' ||
+  step.type === 'search' ||
+  step.type === 'mcp_tool'
     ? step.key
     : `${step.type}-${index}`
 
@@ -158,6 +150,8 @@ const StepItem = ({
       return <FindRow step={step} isLast={isLast} />
     case 'read_link':
       return <ReadLinkRow step={step} isLast={isLast} />
+    case 'mcp_tool':
+      return <McpToolRow step={step} message={message} streaming={streaming} isLast={isLast} />
     default:
       return null
   }

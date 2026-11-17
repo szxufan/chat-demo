@@ -27,10 +27,7 @@ type ConfigOptions = {
 const DEFAULT_API_ORIGIN = 'https://new-api.test.mylinkpi.com'
 
 /** 创建构建配置，支持自定义 API 地址和开发服务器选项 */
-export const createConfig = ({
-  apiOrigin,
-  devServer,
-}: ConfigOptions = {}): Configuration => {
+export const createConfig = ({ apiOrigin, devServer }: ConfigOptions = {}): Configuration => {
   // 容器构建可能传入空串；地址可能带尾斜杠，统一归一化，避免回退失效或拼出 //path
   const origin = apiOrigin?.trim().replace(/\/+$/, '') || DEFAULT_API_ORIGIN
   // CSP 经 meta 注入页面，兜底第三方渲染库（mermaid/katex/prism）的 XSS。
@@ -43,6 +40,8 @@ export const createConfig = ({
     "style-src 'self' file: 'unsafe-inline'",
     // blob: 本地附件预览；https: 搜索结果站点图标；data: mermaid 内嵌图
     "img-src 'self' file: blob: data: https:",
+    // blob: 本地媒体原件；https: 远程媒体；http: 仅开发期 http 页面播放上游代理视频
+    "media-src 'self' file: blob: https: http:",
     "font-src 'self' file: data:",
     // 开发模式放行 HMR WebSocket
     `connect-src 'self' ${origin}${dev ? ' ws:' : ''}`,

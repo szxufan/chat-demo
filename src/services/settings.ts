@@ -24,6 +24,8 @@ type Settings = {
   thinkingEffort: string | null
   thinking: boolean
   search: boolean
+  /** 是否启用 MCP 工具（文生图/图片编辑/视频生成等），端点与鉴权复用网关和 API Key */
+  mcp: boolean
   siderCollapsed: boolean
 }
 
@@ -38,6 +40,7 @@ const KEYS = {
   thinkingEffort: 'chat-demo:thinking-effort',
   thinking: 'chat-demo:thinking',
   search: 'chat-demo:search',
+  mcp: 'chat-demo:mcp',
   siderCollapsed: 'chat-demo:sider-collapsed',
 } as const
 
@@ -109,6 +112,7 @@ export const useSettings = create<Settings>(() => ({
   thinkingEffort: read(KEYS.thinkingEffort),
   thinking: read(KEYS.thinking) === 'true',
   search: read(KEYS.search) === 'true',
+  mcp: read(KEYS.mcp) === 'true',
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
 
@@ -161,6 +165,11 @@ export const setThinking = (thinking: boolean) => {
 export const setSearch = (search: boolean) => {
   write(KEYS.search, String(search))
   useSettings.setState({ search })
+}
+
+export const setMcp = (mcp: boolean) => {
+  write(KEYS.mcp, String(mcp))
+  useSettings.setState({ mcp })
 }
 
 export const setSiderCollapsed = (siderCollapsed: boolean) => {

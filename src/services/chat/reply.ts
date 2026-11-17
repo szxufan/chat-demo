@@ -9,13 +9,7 @@ import type {
   StopReason,
 } from '../api/types.js'
 import { toolCallsForHistory, toolMessageForHistory } from './tools.js'
-import type {
-  AssistantMessage,
-  Message,
-  ReplyBlock,
-  ReplyStatus,
-  UserMessage,
-} from './types.js'
+import type { AssistantMessage, Message, ReplyBlock, ReplyStatus, UserMessage } from './types.js'
 
 const updateBlock = (
   reply: AssistantMessage,
@@ -191,19 +185,20 @@ export const canContinueReply = (reply: AssistantMessage): boolean => {
         block.type === 'server_tool_use' ||
         block.type === 'web_search_tool_result' ||
         block.type === 'web_fetch_tool_result' ||
+        block.type === 'mcp_tool_use' ||
+        block.type === 'mcp_tool_result' ||
         (block.type === 'text' && block.isTemplate)
     )
   ) {
     return false
   }
   return (
-    reply.status === 'stopped' ||
-    (reply.status === 'done' && reply.stopReason === 'max_tokens')
+    reply.status === 'stopped' || (reply.status === 'done' && reply.stopReason === 'max_tokens')
   )
 }
 
 /**
- * 已结束或停止且有回答文本的回复才放进上下文；被安全拒绝的轮次不回传。
+ * 已结束或停止且有回答文本（或 MCP 生成媒体）的回复才放进上下文；被安全拒绝的轮次不回传。
  * 服务端模板提示不进入上下文。
  */
 const isUsableReply = (message: Message): message is AssistantMessage =>
@@ -211,7 +206,8 @@ const isUsableReply = (message: Message): message is AssistantMessage =>
   (message.status === 'done' || message.status === 'stopped') &&
   message.stopReason !== 'refusal' &&
   !message.blocks.some((block) => block.type === 'text' && block.isTemplate) &&
-  getReplyText(message) !== ''
+  (getReplyText(message) !== '' ||
+    message.blocks.some((block) => block.type === 'mcp_tool_result' && block.media.length > 0))
 
 /** 历史中会进入请求上下文的轮次：提问后紧跟可用回答的才保留 */
 export const getContextRounds = (history: Message[]): [UserMessage, AssistantMessage][] => {
@@ -226,10 +222,11 @@ export const getContextRounds = (history: Message[]): [UserMessage, AssistantMes
   return rounds
 }
 
-/** 图片按本地原件内联 base64；没有原件的附件不进入请求 */
+/** 图片按本地原件内联 base64；没有原件的附件不进入请求。MCP 启用时附上图片引用 id 说明。 */
 const toUserParam = (
   { content, files }: UserMessage,
-  imageData: Map<string, string>
+  imageData: Map<string, string>,
+  mcp = false
 ): ChatMessageParam | null => {
   const parts: ChatContentPart[] = files.flatMap((file) => {
     const url = file.isImage ? imageData.get(file.id) : undefined
@@ -237,6 +234,15 @@ const toUserParam = (
   })
   if (content) {
     parts.push({ type: 'text', text: content })
+  }
+  const imageFiles = mcp ? files.filter((file) => file.isImage) : []
+  if (imageFiles.length > 0) {
+    parts.push({
+      type: 'text',
+      text: `[MCP image references — pass these exact ids to image_ids / first_frame_id / last_frame_id when editing or animating the attached images: ${imageFiles
+        .map((file) => `"${file.name}" = ${file.id}`)
+        .join('; ')}]`,
+    })
   }
   if (parts.length === 0) {
     return null
@@ -295,21 +301,24 @@ export const toOpenAIMessages = (
   question: UserMessage,
   systemText: string,
   imageData: Map<string, string>,
-  prefix?: AssistantMessage
+  prefix?: AssistantMessage,
+  mcp = false
 ): ChatMessageParam[] => {
   const messages: ChatMessageParam[] = []
   if (systemText) {
     messages.push({ role: 'system', content: systemText })
   }
   for (const [user, reply] of getContextRounds(history)) {
-    const userParam = toUserParam(user, imageData)
+    const userParam = toUserParam(user, imageData, mcp)
     // 历史提问没有文字、图片也没有本地原件时，提问为空，连同回答一起省略。
     if (userParam === null) {
       continue
     }
     messages.push(userParam, ...toAssistantParams(reply))
   }
-  messages.push(toUserParam(question, imageData) ?? { role: 'user', content: question.content })
+  messages.push(
+    toUserParam(question, imageData, mcp) ?? { role: 'user', content: question.content }
+  )
   if (prefix?.prefix) {
     const text = mergeText(prefix.blocks)
     // 没有非空白正文时直接重发原问题，避免服务端拒绝空 Prefill。

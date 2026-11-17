@@ -62,8 +62,47 @@ export type TextPart = {
   isTemplate?: boolean
 }
 
+/** MCP 生成的媒体引用：本地原件优先，远程地址兜底（可能过期或受混合内容限制）。 */
+export type McpMedia = {
+  kind: 'image' | 'video'
+  /** IndexedDB files 表主键；未落盘时为 null，仅能用远程地址展示 */
+  fileId: string | null
+  /** 网关代理或上游地址；base64 图片落盘后为空串 */
+  url: string
+  mimeType: string
+  name: string
+  size?: number
+}
+
+/** MCP 工具调用块：客户端工具循环里由模型的 tool_calls 合成，id 为 tool_call id */
+export type McpToolUseBlock = {
+  type: 'mcp_tool_use'
+  id: string
+  /** 声明给模型的工具名（净化后），路由表映射回 MCP 原名 */
+  name: string
+  input: unknown
+  startedAt?: number
+  /** 视频任务进度（如 "50%"），客户端轮询期间更新 */
+  progress?: string
+}
+
+/** MCP 工具结果块：媒体已提取落盘，message 为回传给模型的文本，历史原样重建 */
+export type McpToolResultBlock = {
+  type: 'mcp_tool_result'
+  tool_use_id: string
+  message: string
+  media: McpMedia[]
+  isError?: boolean
+  endedAt?: number
+}
+
 /** 服务端工具调用与结果块按协议原样保存；历史请求只回传 read_link 调用与结果 */
-export type ReplyBlock = ThinkingPart | TextPart | ServerToolBlock
+export type ReplyBlock =
+  | ThinkingPart
+  | TextPart
+  | ServerToolBlock
+  | McpToolUseBlock
+  | McpToolResultBlock
 
 /**
  * pending：已发出请求，还没收到事件；streaming：正在接收；
@@ -83,6 +122,8 @@ export type AssistantMessage = MessageBranch & {
   effort?: string
   /** 请求时是否声明 deepseek_web_search；关闭时仍声明 deepseek_read_url */
   search?: boolean
+  /** 请求时是否启用 MCP 工具（文生图/图片编辑/视频生成等） */
+  mcp?: boolean
   /** 本轮请求的系统信息快照；各回答版本独立保存，续写沿用。历史消息中缺省的快照保持为空。 */
   latestReminder?: string
   /** 是否允许作为续写前缀；仍需满足回复状态与内容限制。 */
