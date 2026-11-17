@@ -1,3 +1,5 @@
+import DOMPurify from 'dompurify'
+
 type Mermaid = typeof import('mermaid').default
 
 let mermaidPromise: Promise<Mermaid> | null = null
@@ -41,7 +43,14 @@ export const renderMermaid = (
     })
 
     const { svg } = await mermaid.render(`standalone-mermaid-${nextId++}`, sanitizeMermaid(code))
-    return isCancelled() ? null : svg
+    // 纵深防御：strict 模式已内置净化，这里再过滤一次，防 mermaid 净化被绕过。
+    // 配置与 mermaid strict 模式自身一致：保留 foreignObject 及其内部 HTML 标签（htmlLabels）。
+    const cleanSvg = DOMPurify.sanitize(svg, {
+      ADD_TAGS: ['foreignobject'],
+      ADD_ATTR: ['dominant-baseline'],
+      HTML_INTEGRATION_POINTS: { foreignobject: true },
+    })
+    return isCancelled() ? null : cleanSvg
   })
 
   // 某张图失败不阻塞后续图表；调用方仍收到原始任务的错误。
