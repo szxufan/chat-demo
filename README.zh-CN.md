@@ -27,6 +27,21 @@ pnpm build
 
 产物位于 `dist/`，可部署到静态服务器，也可直接打开 `dist/index.html`。直接打开时，浏览器和 API 服务需允许 `file://` 页面的存储与跨域请求。
 
+### Docker
+
+构建镜像（nginx 托管静态产物）并运行：
+
+```sh
+docker build -t chat-demo .
+docker run -d -p 8080:80 chat-demo
+```
+
+打开 http://localhost:8080 。API 地址在构建时注入，如需指向自己的 API 服务，通过构建参数传入：
+
+```sh
+docker build --build-arg API_ORIGIN=https://your-api.example.com -t chat-demo .
+```
+
 ## 功能
 
 - 多会话、自动标题、重命名与删除；编辑提问、重新生成和切换消息分支。
@@ -53,7 +68,7 @@ API Key 和设置保存在浏览器 localStorage，会话及附件原件保存�
 | `pnpm lint`   | oxlint 检查         |
 | `pnpm format` | oxfmt 格式化        |
 
-[rspack.config.ts](rspack.config.ts) 默认连接 `https://new-api.test.mylinkpi.com`。`createConfig({ apiOrigin, devServer })` 支持自定义 API 地址和开发服务器代理。
+[rspack.config.ts](rspack.config.ts) 默认连接 `https://new-api.test.mylinkpi.com`。构建时可用 `API_ORIGIN` 环境变量覆盖默认地址，`createConfig({ apiOrigin, devServer })` 支持自定义 API 地址和开发服务器代理。
 
 聊天默认使用 `deepseek-flash`，通过 Anthropic 兼容的 Messages / Files API 通信；语音使用 ASR / TTS 接口。请求使用搜索、链接阅读、标题和 `latest_reminder` 等扩展，接入服务需支持相应能力。附件实际支持的格式以服务端校验为准。
 

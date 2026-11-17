@@ -23,11 +23,16 @@ type ConfigOptions = {
   devServer?: Configuration['devServer']
 }
 
+/** 未指定时使用的 API 地址 */
+const DEFAULT_API_ORIGIN = 'https://new-api.test.mylinkpi.com'
+
 /** 创建构建配置，支持自定义 API 地址和开发服务器选项 */
 export const createConfig = ({
-  apiOrigin = 'https://new-api.test.mylinkpi.com',
+  apiOrigin,
   devServer,
 }: ConfigOptions = {}): Configuration => {
+  // 容器构建可能传入空串；地址可能带尾斜杠，统一归一化，避免回退失效或拼出 //path
+  const origin = apiOrigin?.trim().replace(/\/+$/, '') || DEFAULT_API_ORIGIN
   // CSP 经 meta 注入页面，兜底第三方渲染库（mermaid/katex/prism）的 XSS。
   // file: 仅为支持 file:// 直接打开（其 origin 不透明，'self' 匹配不到本地资源）；
   // http(s) 部署下浏览器本就禁止加载 file: 子资源，无实际放宽。
@@ -40,7 +45,7 @@ export const createConfig = ({
     "img-src 'self' file: blob: data: https:",
     "font-src 'self' file: data:",
     // 开发模式放行 HMR WebSocket
-    `connect-src 'self' ${apiOrigin}${dev ? ' ws:' : ''}`,
+    `connect-src 'self' ${origin}${dev ? ' ws:' : ''}`,
     "object-src 'none'",
     // 应用内没有 iframe/embed，显式禁止，避免 default-src 的 file: 顺带放行框架加载
     "frame-src 'none'",
@@ -102,7 +107,7 @@ export const createConfig = ({
         meta: { 'application-version': version },
         templateParameters: { csp },
       }),
-      new rspack.DefinePlugin({ __API_ORIGIN__: JSON.stringify(apiOrigin) }),
+      new rspack.DefinePlugin({ __API_ORIGIN__: JSON.stringify(origin) }),
       new rspack.CopyRspackPlugin({
         patterns: [{ from: path.resolve(root, 'LICENSE'), to: 'LICENSE', toType: 'file' }],
       }),
@@ -112,5 +117,6 @@ export const createConfig = ({
   }
 }
 
+// API_ORIGIN 环境变量供容器化构建传参（Dockerfile ARG），未设置时用默认地址
 // eslint-disable-next-line import/no-default-export
-export default defineConfig(createConfig())
+export default defineConfig(createConfig({ apiOrigin: process.env.API_ORIGIN }))

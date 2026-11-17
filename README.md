@@ -27,6 +27,21 @@ pnpm build
 
 The output is written to `dist/`. Deploy it to a static web server or open `dist/index.html` directly. Opening the file directly requires browser support for storage on `file://` pages and an API service that permits their cross-origin requests.
 
+### Docker
+
+Build an image that serves the static site with nginx, then run it:
+
+```sh
+docker build -t chat-demo .
+docker run -d -p 8080:80 chat-demo
+```
+
+Open http://localhost:8080. The API origin is baked in at build time; to point at your own API service, pass it as a build argument:
+
+```sh
+docker build --build-arg API_ORIGIN=https://your-api.example.com -t chat-demo .
+```
+
 ## Features
 
 - Multiple conversations with automatic titles, renaming, and deletion; edit prompts, regenerate replies, and switch between message branches.
@@ -53,7 +68,7 @@ Settings → Data → Delete all chats clears all local conversations, original 
 | `pnpm lint`   | Lint with oxlint             |
 | `pnpm format` | Format with oxfmt            |
 
-[rspack.config.ts](rspack.config.ts) uses `https://new-api.test.mylinkpi.com` by default. Use `createConfig({ apiOrigin, devServer })` to customize the API origin and development server proxy.
+[rspack.config.ts](rspack.config.ts) uses `https://new-api.test.mylinkpi.com` by default. The `API_ORIGIN` environment variable overrides it at build time, and `createConfig({ apiOrigin, devServer })` customizes the API origin and development server proxy.
 
 Chat uses `deepseek-flash` by default through Anthropic-compatible Messages / Files APIs. Speech features use ASR / TTS endpoints. Requests include extensions for search, link reading, titles, and `latest_reminder`, so the configured service must support the corresponding capabilities. Supported attachment formats are determined by server-side validation.
 
