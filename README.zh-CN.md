@@ -46,17 +46,17 @@ docker build --build-arg API_ORIGIN=https://your-api.example.com -t chat-demo .
 
 - 多会话、自动标题、重命名与删除；编辑提问、重新生成和切换消息分支。
 - 流式回答、深度思考、智能搜索、链接阅读与来源引用；支持停止和符合条件的继续生成。
-- 附件上传、粘贴与拖拽，语音输入和回复朗读；移动端录音时输入框首行显示实时频谱。
+- 图片附件粘贴与拖拽，语音输入和回复朗读；移动端录音时输入框首行显示实时频谱。
 - Markdown、代码高亮、KaTeX 公式和 Mermaid 图表。
 - 简体中文与英文、浅色与深色主题、移动端布局、位置设置、历史导入导出。
 
 ## 数据
 
-API Key 和设置保存在浏览器 localStorage，会话及附件原件保存在 IndexedDB，本地数据按浏览器用户配置和站点源（origin）隔离。发送对话、上传附件和使用语音功能时，相应内容会提交给配置的 API 服务。
+API Key 和设置保存在浏览器 localStorage，会话及附件原件保存在 IndexedDB，本地数据按浏览器用户配置和站点源（origin）隔离。发送对话、发送图片附件和使用语音功能时，相应内容会提交给配置的 API 服务。
 
 设置中的历史导入导出使用 ZIP 格式。导入会在确认并校验成功后替换全部本地会话和附件；导出包含会话与本地可用的图片原件，不包含 API Key、设置或非图片附件原件。格式与保留范围见[历史导入导出](src/services/chat/history/README.md)。
 
-设置 → 数据管理 → 删除所有对话，会在确认后清空全部本地会话、附件原件和未发送的草稿，停止正在生成的回复并回到新对话。API Key 和其他设置保留，已上传到 API 服务的文件不受影响。
+设置 → 数据管理 → 删除所有对话，会在确认后清空全部本地会话、附件原件和未发送的草稿，停止正在生成的回复并回到新对话。API Key 和其他设置保留。
 
 ## 开发
 
@@ -70,7 +70,7 @@ API Key 和设置保存在浏览器 localStorage，会话及附件原件保存�
 
 [rspack.config.ts](rspack.config.ts) 默认连接 `https://new-api.test.mylinkpi.com`。构建时可用 `API_ORIGIN` 环境变量覆盖默认地址，`createConfig({ apiOrigin, devServer })` 支持自定义 API 地址和开发服务器代理。
 
-聊天模型列表从上游 `GET /v1/models` 拉取（仅保留聊天模型），可在输入框工具栏切换；开启深度思考时，支持强度选择的模型还会显示思考强度选择器（`output_config.effort`）。聊天通过 Anthropic 兼容的 Messages / Files API 通信；语音使用 ASR / TTS 接口。请求使用搜索、链接阅读、标题和 `latest_reminder` 等扩展，接入服务需支持相应能力。附件实际支持的格式以服务端校验为准。
+聊天模型列表从上游 `GET /v1/models` 拉取（仅保留聊天模型），可在输入框工具栏切换；开启深度思考时，支持强度选择的模型还会显示思考强度选择器（`reasoning_effort`）。聊天通过 OpenAI 兼容的 `/v1/chat/completions` 流式接口通信；搜索与链接阅读由客户端工具循环执行（`/v1/tools/search|fetch`），图片附件以 base64 内联进请求，会话标题由客户端补请求生成；语音使用 ASR / TTS 接口。
 
 ```text
 src/

@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { useIsMobile } from '../../app/viewport.js'
 import { IconEditOutline16 } from '../base/icons.js'
-import { editMessage, retryUpload } from '../../services/chat/store.js'
+import { editMessage } from '../../services/chat/store.js'
 import { stopReadAloud } from '../../services/speech/readAloud.js'
 import type { UserMessage as UserMessageType } from '../../services/chat/types.js'
 import { Button } from '../base/Button.js'
@@ -21,7 +21,6 @@ import styles from './UserMessage.module.css'
 export const UserMessage = memo(function UserMessage({
   sessionId,
   message,
-  retryUploadId,
   isFirst,
   isLast,
   busy,
@@ -30,8 +29,6 @@ export const UserMessage = memo(function UserMessage({
 }: {
   sessionId: string
   message: UserMessageType
-  /** 回答因补传附件失败可重试时为该回答 id */
-  retryUploadId: string | null
   isFirst: boolean
   isLast: boolean
   busy: boolean
@@ -70,11 +67,7 @@ export const UserMessage = memo(function UserMessage({
           )}
         >
           {message.files.map((file) => (
-            <MessageFile
-              key={file.id}
-              file={file}
-              onRetry={retryUploadId ? () => retryUpload(sessionId, retryUploadId) : null}
-            />
+            <MessageFile key={file.id} file={file} />
           ))}
         </div>
       ) : null}

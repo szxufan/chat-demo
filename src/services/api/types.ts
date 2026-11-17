@@ -1,7 +1,7 @@
 /**
- * Messages API（Anthropic 兼容格式）协议类型，只取本应用用到的部分。
- * 文档：https://api-docs.deepseek.com/zh-cn/api/create-message
- * 声明 deepseek_web_search / deepseek_read_url 或设置 safety_check.level 为 high 时进入扩展模式。
+ * OpenAI 兼容接口（/v1/chat/completions）协议类型，只取本应用用到的部分。
+ * 搜索与链接阅读由客户端工具循环执行（/v1/tools/search|fetch），见 services/api/tools.ts。
+ * 「本地持久化形状」一节与 wire 协议无关：IndexedDB 与历史归档沿用这些结构，边界处做映射。
  */
 
 /** 模型 id 来自上游 GET /v1/models，不再限定固定名单 */
@@ -20,27 +20,19 @@ export type ModelInfo = {
   reasoning_options?: string[]
 }
 
-// ---------- 响应：内容块 ----------
+// ---------- 本地持久化形状 ----------
 
-/** 正文引用：服务端把模型的引用标记还原为来源，挂在对应文本块上 */
+/** 正文引用来源；当前由模型正文内的 [citation:N] 角标配合来源列表渲染，此结构保留供归档兼容 */
 export type TextCitation = {
   type: 'web_search_result_location'
   url: string
   /** 查不到标题时为 null */
   title: string | null
-  /** 当前文本块截至该引用处的全部正文（去除首尾空白） */
   cited_text: string
-  /** 恒为空串 */
   encrypted_index: string
 }
 
-/** 文本块：挂过引用的块之后，后续正文另起新块；同一块内引用按 url 去重 */
-export type TextBlock = { type: 'text'; text: string; citations?: TextCitation[] }
-
-/** 思考块：签名在块结束前经 signature_delta 下发，值为本次响应的消息 id */
-export type ThinkingBlock = { type: 'thinking'; thinking: string; signature: string }
-
-/** 服务端识别调用所属联网能力用的 kind，区分文字搜索、图搜及边想边搜。 */
+/** 服务端工具调用的 kind，区分文字搜索、图搜及边想边搜；客户端循环合成时沿用 */
 export type ServerToolKind =
   | 'search'
   | 'deep_search'
@@ -56,12 +48,10 @@ export type ServerToolInput =
   | { action: 'find_in_page'; url: string; pattern: string }
   | { action: 'read_link'; url: string }
 
-/** 服务端工具调用块：原子下发，content_block_start 即携带完整 input */
+/** 工具调用块：客户端循环里由模型的 tool_calls 合成，id 为 tool_call id */
 export type ServerToolUseBlock = {
   type: 'server_tool_use'
-  /** srvtoolu_{s|ds|rl|is|dis}_{序号}_{32 位 hex} */
   id: string
-  /** 文字搜索与图搜均为 deepseek_web_search；read_link 为 deepseek_read_url */
   name: 'deepseek_web_search' | 'deepseek_read_url'
   input: ServerToolInput
   caller: { type: 'direct' }
@@ -80,7 +70,7 @@ export type WebSearchResult = {
   site_icon: string | null
   /** 无站点名称时为 null */
   site_name: string | null
-  /** 搜索摘要经 AES-256-GCM 加密后的 Base64，客户端无法解密展示 */
+  /** 历史归档不带加密摘要，导入时为空串 */
   encrypted_content: string
   /** RFC 3339 UTC 时间，没有发布时间时为 null */
   page_age: string | null
@@ -104,11 +94,11 @@ export type WebFetchResult = {
   url: string
   content: {
     type: 'document'
-    /** read_link / deep_search 均为空串；阅读链接的页面加密在结果块的 signature 中 */
+    /** 客户端抓取的网页明文正文 */
     source: { type: 'text'; media_type: 'text/plain'; data: string }
     title: string | null
   }
-  /** read_link 为网页解析出的原始日期字符串；deep_search 为 RFC 3339 */
+  /** 抓取时间等原始日期字符串；缺省为 null */
   published_at: string | null
 }
 
@@ -123,7 +113,7 @@ export type WebFetchToolResultBlock = {
   tool_use_id: string
   content: WebFetchResult | WebFetchToolResultError
   kind: 'read_link' | 'deep_search'
-  /** 仅 read_link 成功时返回的加密页面，多轮请求原样回传；失败及 deep_search 不返回 */
+  /** 旧版服务端加密页面签名；OpenAI 兼容面不再产生，仅历史数据可能携带 */
   signature?: string
 }
 
@@ -132,137 +122,94 @@ export type ServerToolBlock =
   | WebSearchToolResultBlock
   | WebFetchToolResultBlock
 
-/** 用于识别客户端工具调用的内容块类型 */
-export type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: unknown }
-
-// ---------- 请求 ----------
-
-export type TextBlockParam = { type: 'text'; text: string }
-
-/**
- * 文件块：引用经 Files API 上传的文件，图片用 image、其余用 document；
- * 图片请求需带 anthropic-beta: files-api-2025-04-14；扩展模式不支持 document，返回 400。
- */
-export type FileBlockParam = {
-  type: 'image' | 'document'
-  source: { type: 'file'; file_id: string }
-}
-
-/** 接口接受的调用块；历史只回传 kind 为 read_link 的调用 */
-export type ServerToolUseBlockParam = Pick<
-  ServerToolUseBlock,
-  'type' | 'id' | 'name' | 'input' | 'kind'
->
-
-/** 接口接受的搜索结果块；历史搜索结果不回传 */
-export type WebSearchToolResultBlockParam = WebSearchToolResultBlock
-
-/** 只回传 read_link 结果；成功时原样保留 signature，供服务端解密恢复网页上下文 */
-export type WebFetchToolResultBlockParam = WebFetchToolResultBlock
-
-export type AssistantBlockParam =
-  | TextBlockParam
-  | ThinkingBlock
-  | ServerToolUseBlockParam
-  | WebSearchToolResultBlockParam
-  | WebFetchToolResultBlockParam
-
-/** 末尾 assistant 自动触发继续生成，无需 prefix 字段 */
-export type MessageParam =
-  /** Chat Engine 扩展角色，位于对应 user 前；需服务端支持 latest_reminder。 */
-  | { role: 'latest_reminder'; content: string }
-  | { role: 'user'; content: string | (FileBlockParam | TextBlockParam)[] }
-  | { role: 'assistant'; content: AssistantBlockParam[] }
-
-/** 开启联网搜索与边想边搜 */
-export type DeepseekWebSearchTool = {
-  type: 'deepseek_web_search'
-  name: 'deepseek_web_search'
-}
-
-/** 阅读本轮用户消息中的链接，与搜索工具独立声明 */
-export type DeepseekReadUrlTool = {
-  type: 'deepseek_read_url'
-  name: 'deepseek_read_url'
-}
-
-export type CreateMessageRequest = {
-  model: ChatModel
-  system: string
-  messages: MessageParam[]
-  thinking: { type: 'enabled' | 'disabled' }
-  /** 思考强度，取值来自模型的 reasoning_options；显式 thinking.type 优先于 effort 决定开关 */
-  output_config?: { effort: string }
-  tools: (DeepseekWebSearchTool | DeepseekReadUrlTool)[]
-  safety_check: { level: 'high' }
-  title?: { enabled: boolean }
-}
-
-// ---------- 响应：流式事件 ----------
-
+/** 本地结束原因形状；边界处由 OpenAI finish_reason 映射 */
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'refusal'
 
 export type StopDetails = { type: 'refusal'; category: null; explanation: null }
 
+/** 本地用量形状；边界处由 OpenAI usage 映射，跨工具轮累加 */
 export type MessageUsage = {
   /** 未命中缓存的输入 Token */
   input_tokens: number
   cache_creation_input_tokens: number
   cache_read_input_tokens: number
-  /** message_start 中为 0，message_delta 中为全轮累计值 */
   output_tokens: number
-  /** 仅当 message_delta 中有对外输出的搜索结果块时出现 */
+  /** 仅当请求声明了搜索工具时出现 */
   server_tool_use?: { web_search_requests: number; tool_search: number }
 }
 
-/** content_block_start 携带的初始内容块；工具块已是完整内容 */
-export type OutputBlockStart = TextBlock | ThinkingBlock | ServerToolBlock | ToolUseBlock
+// ---------- OpenAI 兼容请求 ----------
 
-export type ContentBlockDelta =
-  | { type: 'text_delta'; text: string }
-  | { type: 'thinking_delta'; thinking: string }
-  | { type: 'signature_delta'; signature: string }
-  | { type: 'citations_delta'; citation: TextCitation }
-  | { type: 'input_json_delta'; partial_json: string }
+/** user 消息内容块：文本或内联 base64 图片 */
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
 
-/** 流式事件：SSE 的 event 名与 JSON 的 type 相同，以 message_stop 结束，不发送 [DONE] */
-export type MessageStreamEvent =
-  | {
-      type: 'message_start'
-      /** id 为不带 msg_ 前缀的 UUID，等于响应头 x-ds-request-id */
-      message: { id: string; model: string; usage?: MessageUsage }
-    }
-  | { type: 'content_block_start'; index: number; content_block: OutputBlockStart }
-  | { type: 'content_block_delta'; index: number; delta: ContentBlockDelta }
-  | { type: 'content_block_stop'; index: number }
-  | {
-      type: 'message_delta'
-      /** title 仅在开启标题且生成成功时出现；stop_details 仅在 refusal 时出现 */
-      delta: {
-        stop_reason: StopReason
-        stop_sequence: null
-        stop_details?: StopDetails
-        title?: string
-      }
-      usage?: MessageUsage
-    }
-  | { type: 'message_stop' }
-  | { type: 'ping' }
-
-/**
- * POST /anthropic/v1/files 的 purpose：PDF 与 Word、PPT 需要服务端做版面解析；
- * 纯文本、代码、表格与电子书不需要解析，用 user_data。
- */
-export type FilePurpose = 'rich_layout_recognition' | 'user_data'
-
-/** POST /anthropic/v1/files 的响应 */
-export type FileObject = {
+/** 模型发出的客户端工具调用；arguments 为 JSON 字符串，流式按 index 增量下发 */
+export type ChatToolCall = {
   id: string
-  type: 'file'
-  size_bytes: number
-  created_at: string
-  filename: string
-  mime_type: string
+  type: 'function'
+  function: { name: string; arguments: string }
+  index?: number
+}
+
+/** tool_calls 流式增量：首片带 id/name，后续片仅 index 与 arguments 片段 */
+export type ChatToolCallDelta = {
+  index?: number
+  id?: string
+  type?: string
+  function?: { name?: string; arguments?: string }
+}
+
+export type ChatMessageParam =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | ChatContentPart[] }
+  | { role: 'assistant'; content: string | null; tool_calls?: ChatToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string }
+
+/** 搜索/链接阅读声明为 function 工具：模型发 tool_calls，应用执行后以 tool 消息回传 */
+export type ChatFunctionTool = {
+  type: 'function'
+  function: { name: string; description: string; parameters: Record<string, unknown> }
+}
+
+export type ChatCompletionRequest = {
+  model: ChatModel
+  messages: ChatMessageParam[]
+  stream: true
+  stream_options?: { include_usage: boolean }
+  thinking?: { type: 'enabled' | 'disabled' }
+  /** 思考强度，取值来自模型的 reasoning_options；显式 thinking.type 优先决定开关 */
+  reasoning_effort?: string
+  safety_check?: { level: 'high' }
+  tools?: ChatFunctionTool[]
+  max_tokens?: number
+}
+
+// ---------- OpenAI 兼容响应 ----------
+
+export type OpenAIUsage = {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  prompt_tokens_details?: { cached_tokens?: number }
+  completion_tokens_details?: { reasoning_tokens?: number }
+}
+
+/** 流式 chunk：delta 增量；结束 chunk 带 finish_reason；usage 在 choices 为空的独立 chunk */
+export type ChatCompletionChunk = {
+  id: string
+  choices: {
+    index: number
+    delta: {
+      role?: string
+      content?: string | null
+      reasoning_content?: string | null
+      tool_calls?: ChatToolCallDelta[]
+    }
+    finish_reason: string | null
+  }[]
+  usage?: OpenAIUsage | null
 }
 
 /** 非 2xx 响应体；流中出现只含 error 的无名 data 帧时同样按此解析 */

@@ -16,7 +16,6 @@ import {
   getDraft,
   prepareDraftMessage,
   removeDraftAttachment,
-  retryDraftAttachment,
   setDraftText,
   useDrafts,
 } from '../../services/chat/drafts.js'
@@ -27,7 +26,7 @@ import { ensureApiKey } from '../settings/settingsDialogState.js'
 import { DragMask, useFileDrop } from './DragMask.js'
 import { ModelSelector, ThinkingEffortSelector } from './ModelControls.js'
 import { showToast } from '../base/toastState.js'
-import { ACCEPT, useUploads } from '../../services/attachments.js'
+import { ACCEPT } from '../../services/attachments.js'
 import { DraftAttachments } from './DraftAttachments.js'
 import { useVoiceInput } from './useVoiceInput.js'
 import { VoiceButton } from './VoiceButton.js'
@@ -46,7 +45,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const draft = useDrafts((state) => state.drafts.get(sessionId) ?? EMPTY_DRAFT)
   const { text, attachments } = draft
   const setText = (value: string) => setDraftText(sessionId, value)
-  const draftReady = useUploads((state) => prepareDraftMessage(draft, state.tasks) !== null)
+  const draftReady = prepareDraftMessage(draft) !== null
   const streaming = useChatStore(
     (state) => sessionId !== null && Object.hasOwn(state.streaming, sessionId)
   )
@@ -76,22 +75,14 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   }, [t])
 
   const acceptFiles = (files: File[]) => {
-    if (files.length === 0 || useChatStore.getState().importingHistory || !ensureApiKey()) {
+    if (files.length === 0 || useChatStore.getState().importingHistory) {
       return
     }
-    const error = addDraftFiles(sessionId, files, useSettings.getState().apiKey ?? '')
+    const error = addDraftFiles(sessionId, files)
     if (error) {
       showToast(error)
     }
   }
-  const retryFile = useCallback(
-    (id: string) => {
-      if (!useChatStore.getState().importingHistory && ensureApiKey()) {
-        retryDraftAttachment(sessionId, id, useSettings.getState().apiKey ?? '')
-      }
-    },
-    [sessionId]
-  )
   const removeFile = useCallback(
     (id: string) => {
       if (!useChatStore.getState().importingHistory) {
@@ -130,18 +121,18 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   // 移动端录音时用频谱替代输入框内容
   const recording = voice.status === 'recording'
 
-  // 排队、上传中或上传失败的附件都留在输入框，全部上传成功后才能发送
+  // 有文字或有附件即可发送；附件只存本地，发送时内联
   const canSend = !importingHistory && !streaming && voice.status === 'idle' && draftReady
 
   const send = () => {
     if (
       useChatStore.getState().importingHistory ||
       voice.status !== 'idle' ||
-      !prepareDraftMessage(getDraft(sessionId), useUploads.getState().tasks)
+      !prepareDraftMessage(getDraft(sessionId))
     ) {
       return
     }
-    // 文本与上传完成态由提交动作读取最新快照，不使用上一次渲染的草稿。
+    // 文本与附件由提交动作读取最新快照，不使用上一次渲染的草稿。
     if (!ensureApiKey() || !sendMessage(sessionId)) {
       return
     }
@@ -162,7 +153,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
         }
       }}
     >
-      <DraftAttachments items={attachments} onRetry={retryFile} onRemove={removeFile} />
+      <DraftAttachments items={attachments} onRemove={removeFile} />
       <div className={styles.textareaWrapper}>
         <textarea
           ref={textareaRef}

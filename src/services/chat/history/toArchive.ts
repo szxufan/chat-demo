@@ -75,27 +75,27 @@ const toolFragment = (tool: ServerToolUseBlock, result: ReplyBlock | undefined):
       },
     ]
   }
-  // 成功结果的 URL / 标题用于展示，加密页面签名原样保存供后续请求恢复上下文。
-  if (input.action === 'read_link') {
-    return result?.type === 'web_fetch_tool_result' &&
-      result.kind === 'read_link' &&
-      result.content.type === 'web_fetch_result' &&
-      result.signature?.trim()
-      ? [
+  // 旧版加密页面签名原样保存供后续请求恢复上下文；OpenAI 兼容面客户端抓取的页面
+  // 没有签名，落到下方按 TOOL_OPEN 导出 url/标题。
+  if (
+    input.action === 'read_link' &&
+    result?.type === 'web_fetch_tool_result' &&
+    result.kind === 'read_link' &&
+    result.content.type === 'web_fetch_result' &&
+    result.signature?.trim()
+  ) {
+    return [
+      {
+        type: 'READ_LINK',
+        results: [
           {
-            type: 'READ_LINK',
-            results: [
-              {
-                ...(result.content.url || input.url
-                  ? { url: result.content.url || input.url }
-                  : {}),
-                title: result.content.content.title,
-                signature: result.signature,
-              },
-            ],
+            ...(result.content.url || input.url ? { url: result.content.url || input.url } : {}),
+            title: result.content.content.title,
+            signature: result.signature,
           },
-        ]
-      : []
+        ],
+      },
+    ]
   }
   const content = result?.type === 'web_fetch_tool_result' ? result.content : undefined
   const page = content?.type === 'web_fetch_result' ? content : undefined

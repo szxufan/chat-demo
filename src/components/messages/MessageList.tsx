@@ -11,22 +11,6 @@ import { closeSearchPanel } from '../search/searchPanelState.js'
 import { AssistantMessage } from './AssistantMessage.js'
 import { ScrollToBottomContext } from './scrollContext.js'
 import { UserMessage } from './UserMessage.js'
-import type { Message } from '../../services/chat/types.js'
-
-/**
- * 会话共用可重试的附件上传失败入口，覆盖当前提问与历史消息中的附件。
- * 点击后按失败的回答重新补传附件并请求。
- */
-const getUploadRetryId = (messages: Message[], streaming: boolean) => {
-  const last = messages.at(-1)
-  return !streaming &&
-    last?.role === 'assistant' &&
-    last.status === 'error' &&
-    last.error?.kind === 'upload' &&
-    last.error.retryable
-    ? last.id
-    : null
-}
 import styles from './MessageList.module.css'
 
 /** 距底部小于该值时视为在底部，流式内容增长时跟随 */
@@ -140,7 +124,6 @@ export const MessageList = ({
   }, [isMobile, scrollToBottom])
 
   const lastIndex = messages.length - 1
-  const uploadRetryId = getUploadRetryId(messages, streaming)
   return (
     <ScrollToBottomContext.Provider value={scrollToBottom}>
       <div ref={isMobile ? undefined : scrollRef} className={styles.container}>
@@ -152,7 +135,6 @@ export const MessageList = ({
                   key={message.id}
                   sessionId={session.id}
                   message={message}
-                  retryUploadId={uploadRetryId}
                   isFirst={index === 0}
                   isLast={index === lastIndex || index === lastIndex - 1}
                   busy={streaming}

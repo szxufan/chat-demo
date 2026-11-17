@@ -12,7 +12,7 @@ import type {
 /**
  * 消息附件。id 是本地标识（IndexedDB files 表的主键，原件按它存储，所有引用同一 id 的消息共用一份），
  * 导入的附件沿用导出产物里的文件 ID；本地没有原件的附件只展示文件名，不进入请求。
- * serverId 是 Files API 返回的 file_id，导入的数据或尚未上传成功的文件为 null，发送前补传。
+ * serverId 为旧版 Files API 字段，仅为兼容历史数据保留；图片在发送时按本地原件内联为 base64。
  */
 export type FileAttachment = {
   id: string
@@ -45,9 +45,9 @@ export type ThinkingPart = {
   type: 'thinking'
   thinking: string
   signature?: string
-  /** content_block_start 的时间；没有事件时间的历史块缺省 */
+  /** 首个 reasoning_content 增量的时间；没有事件时间的历史块缺省 */
   startedAt?: number
-  /** content_block_stop（或回复结束）的时间 */
+  /** 思考转正文（或回复结束）的时间 */
   endedAt?: number
   /** 仅有耗时、没有事件时间时保存秒数。 */
   elapsedSeconds?: number
@@ -67,7 +67,7 @@ export type ReplyBlock = ThinkingPart | TextPart | ServerToolBlock
 
 /**
  * pending：已发出请求，还没收到事件；streaming：正在接收；
- * done：收到 message_stop；stopped：用户停止或页面关闭；error：请求或流出错
+ * done：流正常结束（[DONE]）；stopped：用户停止或页面关闭；error：请求或流出错
  */
 export type ReplyStatus = 'pending' | 'streaming' | 'done' | 'stopped' | 'error'
 
@@ -79,7 +79,7 @@ export type AssistantMessage = MessageBranch & {
   model: ChatModel | null
   /** 请求时是否开启深度思考 */
   thinking?: boolean
-  /** 请求时的思考强度（output_config.effort）；未记录时续写使用当前设置 */
+  /** 请求时的思考强度（reasoning_effort）；未记录时续写使用当前设置 */
   effort?: string
   /** 请求时是否声明 deepseek_web_search；关闭时仍声明 deepseek_read_url */
   search?: boolean
@@ -100,7 +100,7 @@ export type AssistantMessage = MessageBranch & {
     message: string
     status?: number
     localMessage?: TranslationMessage
-    /** 仅 upload：重新上传是否可能成功（网络、限流、服务端繁忙）；过大、格式不支持为 false */
+    /** 仅旧版 upload 错误：重新上传是否可能成功；新请求不再产生该错误 */
     retryable?: boolean
   }
 }

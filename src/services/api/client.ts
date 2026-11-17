@@ -1,21 +1,16 @@
 import { translate, type TranslationMessage } from '../../i18n/index.js'
-import { readMessageEvent } from './parseEvent.js'
+import { readChunk } from './parseChunk.js'
 import { readServerSentEvents } from './sse.js'
 import type {
   ApiErrorBody,
-  CreateMessageRequest,
-  FileObject,
-  FilePurpose,
-  MessageStreamEvent,
+  ChatCompletionChunk,
+  ChatCompletionRequest,
+  ChatModel,
   ModelInfo,
 } from './types.js'
 
 /** 构建期 API 地址，默认 https://new-api.test.mylinkpi.com；本地开发支持开发服务器代理 */
 export const API_ORIGIN = __API_ORIGIN__
-/** Anthropic 兼容接口的前缀 */
-const ANTHROPIC_BASE_URL = `${API_ORIGIN}/anthropic/v1`
-/** 引用 Files API 上传的图片、调用 Anthropic 兼容 Files API 时必须携带 */
-const FILES_BETA = 'files-api-2025-04-14'
 
 export type ApiErrorKind =
   /** 非 2xx 响应 */
@@ -24,7 +19,7 @@ export type ApiErrorKind =
   | 'stream'
   /** 请求没有到达服务端（断网、跨域被拦截等） */
   | 'network'
-  /** 流在 message_stop 之前结束 */
+  /** 流在 data: [DONE] 之前结束 */
   | 'interrupted'
   /** 响应不符合协议（如非 SSE 响应） */
   | 'protocol'
@@ -83,13 +78,6 @@ export const request = async (url: string, init: RequestInit): Promise<Response>
   return response
 }
 
-const anthropicHeaders = (apiKey: string, beta: boolean): Record<string, string> => ({
-  // DeepSeek 兼容接口的鉴权方式，也可使用 Authorization: Bearer。
-  'x-api-key': apiKey,
-  // Files API 和通过 file_id 引用图片时必传；纯文本聊天无需携带。
-  ...(beta ? { 'anthropic-beta': FILES_BETA } : {}),
-})
-
 const isStringList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 
@@ -141,91 +129,87 @@ export const fetchModels = async (apiKey: string, signal?: AbortSignal): Promise
 }
 
 /**
- * POST /anthropic/v1/files 上传附件（不设过期时间，会话里的历史附件一直可用）。
- * purpose 为 null 时不传该字段（图片）；purpose 必须排在 file 之前。
+ * POST /v1/chat/completions（stream: true），逐个产出流式 chunk，收到 data: [DONE] 时结束。
+ * 保活注释与无法解析的内容不产出；中止请求时抛出 signal 的 AbortError。
  */
-export const uploadFile = async (
+export async function* streamChatCompletion(
   apiKey: string,
-  file: File,
-  purpose: FilePurpose | null,
-  signal?: AbortSignal
-): Promise<FileObject> => {
-  const form = new FormData()
-  if (purpose) {
-    form.append('purpose', purpose)
-  }
-  form.append('file', file)
-  const response = await request(`${ANTHROPIC_BASE_URL}/files`, {
-    method: 'POST',
-    headers: anthropicHeaders(apiKey, true),
-    body: form,
-    signal,
-  })
-  return (await response.json()) as FileObject
-}
-
-/** DELETE /anthropic/v1/files/{file_id} */
-export const deleteFile = async (apiKey: string, fileId: string): Promise<void> => {
-  await request(`${ANTHROPIC_BASE_URL}/files/${encodeURIComponent(fileId)}`, {
-    method: 'DELETE',
-    headers: anthropicHeaders(apiKey, true),
-  })
-}
-
-const hasFile = (body: CreateMessageRequest) =>
-  body.messages.some(
-    (message) =>
-      typeof message.content !== 'string' &&
-      message.content.some((block) => block.type === 'image' || block.type === 'document')
-  )
-
-/**
- * POST /anthropic/v1/messages（stream: true），逐个产出流式事件，收到 message_stop 时结束。
- * ping、保活注释与无法解析的内容不产出；中止请求时抛出 signal 的 AbortError。
- */
-export async function* streamMessage(
-  apiKey: string,
-  body: CreateMessageRequest,
+  body: ChatCompletionRequest,
   signal: AbortSignal
-): AsyncGenerator<MessageStreamEvent> {
-  const response = await request(`${ANTHROPIC_BASE_URL}/messages`, {
+): AsyncGenerator<ChatCompletionChunk> {
+  const response = await request(`${API_ORIGIN}/v1/chat/completions`, {
     method: 'POST',
     headers: {
-      ...anthropicHeaders(apiKey, hasFile(body)),
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
-    body: JSON.stringify({ ...body, stream: true }),
+    body: JSON.stringify(body),
     signal,
   })
   const contentType = response.headers.get('Content-Type') ?? ''
   if (!response.body || !contentType.includes('text/event-stream')) {
     throw await readErrorResponse(response, 'protocol', '')
   }
-  for await (const { event: eventName, data } of readServerSentEvents(response.body, signal)) {
+  for await (const { data } of readServerSentEvents(response.body, signal)) {
+    if (data.trim() === '[DONE]') {
+      return
+    }
     let payload: unknown
     try {
       payload = JSON.parse(data)
     } catch {
-      if (eventName !== 'error') {
-        continue
-      }
+      continue
     }
     if (isErrorBody(payload)) {
       throw new ApiError('stream', payload.error.message)
     }
-    if (eventName === 'error') {
-      throw new ApiError('stream', data)
-    }
-    const event = readMessageEvent(payload)
-    if (!event) {
-      continue
-    }
-    yield event
-    if (event.type === 'message_stop') {
-      return
+    const chunk = readChunk(payload)
+    if (chunk) {
+      yield chunk
     }
   }
   // 服务端没有提供错误内容时保持为空，不推测断流原因。
   throw new ApiError('interrupted', '')
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+/** 网关不返回 title 扩展：首轮回复完成后另发一次小请求概括标题；失败返回 null */
+export const requestTitle = async (
+  apiKey: string,
+  model: ChatModel,
+  question: string,
+  answer: string,
+  signal?: AbortSignal
+): Promise<string | null> => {
+  const response = await request(`${API_ORIGIN}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: translate('autoTitleSystem') },
+        { role: 'user', content: `Q: ${question}\nA: ${answer}`.slice(0, 2000) },
+      ],
+      thinking: { type: 'disabled' },
+      max_tokens: 64,
+      stream: false,
+    }),
+    signal,
+  })
+  const body: unknown = await response.json().catch(() => null)
+  if (!isRecord(body) || !Array.isArray(body.choices)) {
+    return null
+  }
+  const choice = body.choices[0]
+  if (!isRecord(choice) || !isRecord(choice.message)) {
+    return null
+  }
+  const content = choice.message.content
+  return typeof content === 'string' && content.trim() ? content.trim() : null
 }

@@ -4,7 +4,7 @@ import { toSessionSummary, type Session, type SessionSummary } from './types.js'
 /** IndexedDB 存储结构版本；新增或调整存储、索引时递增。 */
 const DB_VERSION = 11
 
-/** 文件原件按附件的本地 id 存储，所有引用同一 id 的消息共用一份；用于缩略图、打开查看，以及没有 serverId 时补传。 */
+/** 文件原件按附件的本地 id 存储，所有引用同一 id 的消息共用一份；用于缩略图、打开查看，以及发送时内联。 */
 export type StoredFile = {
   id: string
   blob: Blob
