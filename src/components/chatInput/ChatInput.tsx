@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
   IconGlobeLanguageOutline14,
   IconPaperclipOutline16,
+  IconPhoneFill16,
   IconSendOutline16,
   IconSparkleOutline14,
   IconStopFill16,
@@ -21,6 +22,12 @@ import {
   useDrafts,
 } from '../../services/chat/drafts.js'
 import { stopReadAloud } from '../../services/speech/readAloud.js'
+import {
+  REALTIME_AVAILABLE,
+  startRealtimeCall,
+  useRealtime,
+} from '../../services/speech/realtime.js'
+import { useModels } from '../../services/models.js'
 import { IconButton } from '../base/IconButton.js'
 import { Tooltip } from '../base/Tooltip.js'
 import { ensureApiKey } from '../settings/settingsDialogState.js'
@@ -29,6 +36,7 @@ import { ModelSelector, ThinkingEffortSelector } from './ModelControls.js'
 import { showToast } from '../base/toastState.js'
 import { ACCEPT } from '../../services/attachments.js'
 import { DraftAttachments } from './DraftAttachments.js'
+import { RealtimeCallBar } from './RealtimeCallBar.js'
 import { useVoiceInput } from './useVoiceInput.js'
 import { VoiceButton } from './VoiceButton.js'
 import { Spectrum } from './Spectrum.js'
@@ -55,6 +63,10 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
   const mcp = useSettings((state) => state.mcp)
+  const realtimeModels = useModels((state) => state.realtimeModels)
+  const inCall = useRealtime(
+    (state) => state.status !== 'idle' && state.chatSessionId === sessionId
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const togglesRef = useRef<HTMLDivElement>(null)
@@ -144,6 +156,21 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
     } else {
       textareaRef.current?.focus()
     }
+  }
+
+  // 通话中由通话条接管输入区；文字与附件仍由草稿服务保留
+  if (inCall) {
+    return (
+      <div
+        className={clsx(
+          styles.wrapper,
+          styles.inCall,
+          sessionId === null ? styles.home : styles.session
+        )}
+      >
+        <RealtimeCallBar />
+      </div>
+    )
   }
 
   return (
@@ -236,6 +263,28 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
           </Tooltip>
         </div>
         <div className={styles.right}>
+          <IconButton
+            size="m"
+            tone="tertiary"
+            icon={<IconPhoneFill16 />}
+            tooltip={
+              !REALTIME_AVAILABLE
+                ? t('realtimeRequiresHttps')
+                : realtimeModels.length === 0
+                  ? t('realtimeNoModels')
+                  : t('realtimeCallTooltip')
+            }
+            disabled={
+              !REALTIME_AVAILABLE || importingHistory || streaming || realtimeModels.length === 0
+            }
+            onClick={() => {
+              if (importingHistory || streaming || !ensureApiKey()) {
+                return
+              }
+              voice.cancel()
+              startRealtimeCall(sessionId)
+            }}
+          />
           <VoiceButton
             status={voice.status}
             disabled={!voice.available}

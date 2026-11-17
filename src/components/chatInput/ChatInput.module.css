@@ -20,6 +20,11 @@
     0 2px 4px rgba(0, 0, 0, 0.04);
 }
 
+/* 通话中：通话条接管，不再是文本输入光标 */
+.inCall {
+  cursor: default;
+}
+
 .home {
   box-shadow:
     0 4px 12px 0 rgba(0, 0, 0, 0.02),

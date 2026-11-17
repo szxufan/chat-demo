@@ -768,6 +768,171 @@ export const continueReply = (sessionId: string, messageId: string) => {
   void streamReply(sessionId, reply, { history: path.slice(0, -2), question, prefix: previous })
 }
 
+/**
+ * 实时语音通话的持久化：转写按普通文本消息追加进会话，复用分支与本地存储。
+ * 通话期间注册进 streaming，复用发送/重新生成/编辑/停止的互斥；增量只更新内存，轮次边界落盘。
+ */
+
+/** 开始通话：target 为 null 时新建会话并激活；返回会话 id 与停止控制器，条件不满足返回 null */
+export const beginRealtimeSession = (
+  targetSessionId: string | null
+): { sessionId: string; controller: AbortController } | null => {
+  if (get().importingHistory || !get().ready) {
+    return null
+  }
+  let sessionId = targetSessionId
+  if (sessionId !== null) {
+    if (
+      deletingSessions.has(sessionId) ||
+      getStreamController(sessionId) ||
+      !getSession(sessionId)
+    ) {
+      return null
+    }
+  } else {
+    const now = Date.now()
+    const session: Session = {
+      id: createId(),
+      title: '',
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      rootMessageId: null,
+    }
+    sessionId = session.id
+    touchSession(session.id)
+    set((state) => ({
+      sessions: [toSessionSummary(session), ...state.sessions],
+      sessionCache: { ...state.sessionCache, [session.id]: session },
+      activeId: session.id,
+    }))
+  }
+  const controller = new AbortController()
+  set((state) => ({ streaming: { ...state.streaming, [sessionId]: controller } }))
+  return { sessionId, controller }
+}
+
+/** 通话结束（挂断、出错、切换会话）时解除生成中状态 */
+export const endRealtimeSession = (sessionId: string) => {
+  set((state) => ({
+    streaming: Object.fromEntries(
+      Object.entries(state.streaming).filter(([id]) => id !== sessionId)
+    ),
+  }))
+}
+
+/** 页面隐藏/关闭前落盘进行中的实时回复 */
+export const persistRealtimeSession = (sessionId: string) => {
+  if (!get().importingHistory) {
+    persist(sessionId)
+  }
+}
+
+/** 追加一条用户转写消息并落盘 */
+export const appendRealtimeUserMessage = (sessionId: string, text: string) => {
+  const session = getSession(sessionId)
+  if (!session || get().importingHistory || deletingSessions.has(sessionId)) {
+    return
+  }
+  const history = getVisibleMessages(session)
+  const message: UserMessage = {
+    id: createId(),
+    role: 'user',
+    content: text,
+    files: [],
+    createdAt: Date.now(),
+  }
+  updateSession(sessionId, (s) => ({
+    ...appendBranch(s, history.at(-1)?.id ?? null, [message]),
+    updatedAt: Date.now(),
+  }))
+  persist(sessionId)
+}
+
+/** 创建实时回复（pending）并落盘；返回回复对象，条件不满足返回 null */
+export const appendRealtimeReply = (
+  sessionId: string,
+  model: ChatModel
+): AssistantMessage | null => {
+  const session = getSession(sessionId)
+  if (!session || get().importingHistory || deletingSessions.has(sessionId)) {
+    return null
+  }
+  const history = getVisibleMessages(session)
+  const reply: AssistantMessage = {
+    id: createId(),
+    role: 'assistant',
+    createdAt: Date.now(),
+    model,
+    thinking: false,
+    search: false,
+    mcp: false,
+    // realtime 模型不一定支持 chat/completions，不允许作为续写前缀
+    prefix: false,
+    status: 'pending',
+    blocks: [],
+  }
+  updateSession(sessionId, (s) => ({
+    ...appendBranch(s, history.at(-1)?.id ?? null, [reply]),
+    updatedAt: Date.now(),
+  }))
+  persist(sessionId)
+  return reply
+}
+
+/** 更新实时回复（仅内存，不落盘）；返回更新后的回复，消息不存在返回 null */
+export const patchRealtimeReply = (
+  sessionId: string,
+  replyId: string,
+  patch: (reply: AssistantMessage) => AssistantMessage
+): AssistantMessage | null => {
+  const session = getSession(sessionId)
+  const existing = session?.messages.find((message) => message.id === replyId)
+  if (!existing || existing.role !== 'assistant') {
+    return null
+  }
+  const updated = patch(existing)
+  updateReply(sessionId, updated)
+  return updated
+}
+
+/** 收尾实时回复并落盘 */
+export const finishRealtimeReply = (
+  sessionId: string,
+  replyId: string,
+  status: 'done' | 'stopped'
+) => {
+  const session = getSession(sessionId)
+  const existing = session?.messages.find((message) => message.id === replyId)
+  if (!existing || existing.role !== 'assistant') {
+    return
+  }
+  updateReply(sessionId, settleReply(existing, status, Date.now()))
+  updateSession(sessionId, (s) => ({ ...s, updatedAt: Date.now() }))
+  persist(sessionId)
+}
+
+/** 首轮实时对话完成后补标题：用当前聊天模型（realtime 模型不一定支持 chat/completions） */
+export const requestRealtimeTitle = (sessionId: string, question: string, answer: string) => {
+  const session = getSession(sessionId)
+  if (!session || session.title || get().importingHistory) {
+    return
+  }
+  const { apiKey, model } = useSettings.getState()
+  if (!apiKey) {
+    return
+  }
+  void requestTitle(apiKey, model ?? DEFAULT_MODEL, question, answer)
+    .then((title) => {
+      if (!title || get().importingHistory) {
+        return
+      }
+      updateSession(sessionId, (s) => (s.title ? s : { ...s, title }))
+      persist(sessionId)
+    })
+    .catch(() => {})
+}
+
 type Request = { history: Message[]; question: UserMessage; prefix?: AssistantMessage }
 
 /**

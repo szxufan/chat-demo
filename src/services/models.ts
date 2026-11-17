@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { fetchModels } from './api/client.js'
 import type { ModelInfo } from './api/types.js'
-import { setModel, setThinkingEffort, useSettings } from './settings.js'
+import { setModel, setRealtimeModel, setThinkingEffort, useSettings } from './settings.js'
 
 /** 默认模型偏好：只用于从上游列表里挑默认值，可用模型名单完全来自上游 */
 const PREFERRED_MODEL = 'deepseek-v4-flash'
@@ -10,18 +10,26 @@ const PREFERRED_EFFORT = 'high'
 
 type ModelsState = {
   models: ModelInfo[]
+  /** 实时语音模型（上游列表中的 realtime 模型），供语音通话选择 */
+  realtimeModels: ModelInfo[]
   /** idle：没有 API Key；error：拉取失败或列表为空，保留上次成功的列表 */
   status: 'idle' | 'loading' | 'ready' | 'error'
 }
 
 export const useModels = create<ModelsState>(() => ({
   models: [],
+  realtimeModels: [],
   status: 'idle',
 }))
 
 /** 聊天模型：supported_endpoint_types 含 openai；字段缺省时宽容保留 */
 const isChatModel = (info: ModelInfo) =>
   info.supported_endpoint_types === undefined || info.supported_endpoint_types.includes('openai')
+
+/** 实时语音模型：id 或端点类型含 realtime（网关可能以任意映射名暴露） */
+const isRealtimeModel = (info: ModelInfo) =>
+  info.id.toLowerCase().includes('realtime') ||
+  (info.supported_endpoint_types?.some((type) => type.toLowerCase().includes('realtime')) ?? false)
 
 /** 展示按模型名称自然排序（版本号按数值比较），上游返回顺序不稳定 */
 const byId = (a: ModelInfo, b: ModelInfo) =>
@@ -56,6 +64,16 @@ const reconcileSelection = (models: ModelInfo[]) => {
   reconcileEffort(next)
 }
 
+/** 已保存实时语音模型不在列表时挑默认：优先 omni 系列，否则第一个；列表为空则清空 */
+const reconcileRealtimeSelection = (models: ModelInfo[]) => {
+  const { realtimeModel } = useSettings.getState()
+  if (models.some((info) => info.id === realtimeModel)) {
+    return
+  }
+  const next = models.find((info) => info.id.toLowerCase().includes('omni')) ?? models[0]
+  setRealtimeModel(next?.id ?? null)
+}
+
 let refreshSeq = 0
 let readyKey: string | null = null
 
@@ -66,7 +84,7 @@ export const refreshModels = async () => {
   const apiKey = useSettings.getState().apiKey
   if (!apiKey) {
     readyKey = null
-    useModels.setState({ models: [], status: 'idle' })
+    useModels.setState({ models: [], realtimeModels: [], status: 'idle' })
     return
   }
   if (useModels.getState().status === 'ready' && readyKey === apiKey) {
@@ -74,17 +92,20 @@ export const refreshModels = async () => {
   }
   useModels.setState({ status: 'loading' })
   try {
-    const list = (await fetchModels(apiKey)).filter(isChatModel)
+    const raw = await fetchModels(apiKey)
     if (seq !== refreshSeq) {
       return
     }
+    const list = raw.filter(isChatModel)
+    const realtimeList = raw.filter(isRealtimeModel).sort(byId)
     if (list.length === 0) {
       useModels.setState({ status: 'error' })
       return
     }
     readyKey = apiKey
-    useModels.setState({ models: list.sort(byId), status: 'ready' })
+    useModels.setState({ models: list.sort(byId), realtimeModels: realtimeList, status: 'ready' })
     reconcileSelection(list)
+    reconcileRealtimeSelection(realtimeList)
   } catch {
     if (seq !== refreshSeq) {
       return

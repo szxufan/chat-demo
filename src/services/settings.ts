@@ -10,7 +10,10 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 /** 未自定义系统提示词时使用的助手身份说明 */
 export const DEFAULT_SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 
-/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、模型与思考强度、深度思考与智能搜索开关、侧边栏收起状态 */
+/** 实时语音默认音色（百炼 realtime 通用音色） */
+export const DEFAULT_REALTIME_VOICE = 'Cherry'
+
+/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、模型与思考强度、深度思考与智能搜索开关、实时语音模型与音色、侧边栏收起状态 */
 type Settings = {
   apiKey: string | null
   locale: Locale
@@ -26,6 +29,10 @@ type Settings = {
   search: boolean
   /** 是否启用 MCP 工具（文生图/图片编辑/视频生成等），端点与鉴权复用网关和 API Key */
   mcp: boolean
+  /** 实时语音所选模型 id；null 表示未选择，由模型列表服务按上游 realtime 模型确定默认值 */
+  realtimeModel: string | null
+  /** 实时语音音色（百炼 realtime 音色名，如 Cherry） */
+  realtimeVoice: string
   siderCollapsed: boolean
 }
 
@@ -41,6 +48,8 @@ const KEYS = {
   thinking: 'chat-demo:thinking',
   search: 'chat-demo:search',
   mcp: 'chat-demo:mcp',
+  realtimeModel: 'chat-demo:realtime-model',
+  realtimeVoice: 'chat-demo:realtime-voice',
   siderCollapsed: 'chat-demo:sider-collapsed',
 } as const
 
@@ -113,6 +122,8 @@ export const useSettings = create<Settings>(() => ({
   thinking: read(KEYS.thinking) === 'true',
   search: read(KEYS.search) === 'true',
   mcp: read(KEYS.mcp) === 'true',
+  realtimeModel: read(KEYS.realtimeModel),
+  realtimeVoice: read(KEYS.realtimeVoice) ?? DEFAULT_REALTIME_VOICE,
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
 
@@ -170,6 +181,16 @@ export const setSearch = (search: boolean) => {
 export const setMcp = (mcp: boolean) => {
   write(KEYS.mcp, String(mcp))
   useSettings.setState({ mcp })
+}
+
+export const setRealtimeModel = (realtimeModel: string | null) => {
+  write(KEYS.realtimeModel, realtimeModel)
+  useSettings.setState({ realtimeModel })
+}
+
+export const setRealtimeVoice = (realtimeVoice: string) => {
+  write(KEYS.realtimeVoice, realtimeVoice)
+  useSettings.setState({ realtimeVoice })
 }
 
 export const setSiderCollapsed = (siderCollapsed: boolean) => {

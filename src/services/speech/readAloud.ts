@@ -4,6 +4,7 @@ import { ApiError } from '../api/client.js'
 import { classifyApiError } from '../api/errors.js'
 import { synthesize, TTS_SAMPLE_RATE } from '../api/speech.js'
 import { useSettings } from '../settings.js'
+import { toFloat32 } from './pcm.js'
 
 /**
  * 朗读：同一时间只读一条回复。
@@ -41,16 +42,6 @@ export const stopReadAloud = () => {
     controller.abort()
     finish(controller)
   }
-}
-
-/** 16-bit 小端 PCM 转成 Float32；奇数字节留到下一段 */
-const toFloat32 = (bytes: Uint8Array) => {
-  const samples = new Float32Array(bytes.length >> 1)
-  const view = new DataView(bytes.buffer, bytes.byteOffset, samples.length * 2)
-  for (let i = 0; i < samples.length; i++) {
-    samples[i] = view.getInt16(i * 2, true) / 0x8000
-  }
-  return samples
 }
 
 export const describeReadAloudError = (error: unknown): TranslationMessage | string => {

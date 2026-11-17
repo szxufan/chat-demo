@@ -20,6 +20,7 @@ import { Toast } from '../components/base/Toast.js'
 import { bindModels } from '../services/models.js'
 import { Button } from '../components/base/Button.js'
 import { stopReadAloud } from '../services/speech/readAloud.js'
+import { bindRealtime } from '../services/speech/realtime.js'
 import { CollapsedSider } from '../components/sider/CollapsedSider.js'
 import { closeMobileSider } from '../components/sider/mobileSiderState.js'
 import { MobileSider, Sider } from '../components/sider/Sider.js'
@@ -58,6 +59,8 @@ export const App = () => {
   useEffect(bindChatPersistence, [])
   // 启动时拉取上游模型列表，API Key 变化时自动刷新
   useEffect(bindModels, [])
+  // 实时语音通话：切换会话/导入历史时结束，页面隐藏前落盘增量
+  useEffect(bindRealtime, [])
 
   // 搜索结果面板只属于当前会话
   useEffect(closeSearchPanel, [activeId])

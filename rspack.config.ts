@@ -43,8 +43,8 @@ export const createConfig = ({ apiOrigin, devServer }: ConfigOptions = {}): Conf
     // blob: 本地媒体原件；https: 远程媒体；http: 仅开发期 http 页面播放上游代理视频
     "media-src 'self' file: blob: https: http:",
     "font-src 'self' file: data:",
-    // 开发模式放行 HMR WebSocket
-    `connect-src 'self' ${origin}${dev ? ' ws:' : ''}`,
+    // 实时语音 WebSocket 走 API 同源 wss；开发模式另放行 HMR WebSocket
+    `connect-src 'self' ${origin} ${origin.replace(/^http/, 'ws')}${dev ? ' ws:' : ''}`,
     "object-src 'none'",
     // 应用内没有 iframe/embed，显式禁止，避免 default-src 的 file: 顺带放行框架加载
     "frame-src 'none'",
