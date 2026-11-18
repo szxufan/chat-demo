@@ -18,6 +18,12 @@ import {
 import { useIsMobile } from '../../app/viewport.js'
 import { useChatStore } from '../../services/chat/store.js'
 import { regionCodes, getRegionName, provinces } from '../../services/location.js'
+import { useModels } from '../../services/models.js'
+import { changeRealtimeVoice } from '../../services/speech/realtime.js'
+import {
+  getRealtimeVoiceOptions,
+  resolveRealtimeVoice,
+} from '../../services/speech/realtimeVoices.js'
 import {
   isChineseBrowser,
   setLocale,
@@ -100,6 +106,7 @@ const SettingsContent = () => {
               <ThemeSetting />
               <LocaleSetting />
               <TtsVoiceSetting />
+              <RealtimeVoiceSetting />
               <LocationSetting />
               <SystemPromptSetting />
             </>
@@ -310,6 +317,34 @@ const TtsVoiceSetting = () => {
             { value: 'tide', label: t('settingsTtsVoiceTide') },
           ]}
           onChange={setTtsVoice}
+        />
+      }
+    />
+  )
+}
+
+/** 实时通话音色与回复朗读音色独立保存；通话中切换在下一轮回复生效。 */
+const RealtimeVoiceSetting = () => {
+  const t = useTranslate()
+  const realtimeVoice = useSettings((state) => state.realtimeVoice)
+  const savedModel = useSettings((state) => state.realtimeModel)
+  const firstModel = useModels((state) => state.realtimeModels[0]?.id)
+  const model = savedModel ?? firstModel ?? null
+  return (
+    <SettingCell
+      label={t('settingsRealtimeVoice')}
+      description={t('settingsRealtimeVoiceDescription')}
+      status={null}
+      action={
+        <Select
+          ariaLabel={t('settingsRealtimeVoice')}
+          className={styles.realtimeVoiceSelect}
+          value={resolveRealtimeVoice(model, realtimeVoice)}
+          options={getRealtimeVoiceOptions(model)}
+          searchable
+          searchPlaceholder={t('realtimeVoiceSearchPlaceholder')}
+          noMatchText={t('realtimeVoiceNoMatch')}
+          onChange={changeRealtimeVoice}
         />
       }
     />

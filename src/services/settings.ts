@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { TtsVoice } from './api/speech.js'
 import { normalizeLocation, type UserLocation } from './location.js'
+import { getDefaultRealtimeVoice, resolveRealtimeVoice } from './speech/realtimeVoices.js'
 
 export type Locale = 'zh-CN' | 'en-US'
 
@@ -10,8 +11,8 @@ export type ThemePreference = 'light' | 'dark' | 'system'
 /** 未自定义系统提示词时使用的助手身份说明 */
 export const DEFAULT_SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 
-/** 实时语音默认音色（百炼 realtime 通用音色） */
-export const DEFAULT_REALTIME_VOICE = 'Cherry'
+/** 未选择实时模型时使用 Qwen3.8-Omni 默认音色；旧 Qwen3-Omni 建连时校正为 Cherry。 */
+export const DEFAULT_REALTIME_VOICE = getDefaultRealtimeVoice(null)
 
 /** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、模型与思考强度、深度思考与智能搜索开关、实时语音模型与音色、侧边栏收起状态 */
 type Settings = {
@@ -31,7 +32,7 @@ type Settings = {
   mcp: boolean
   /** 实时语音所选模型 id；null 表示未选择，由模型列表服务按上游 realtime 模型确定默认值 */
   realtimeModel: string | null
-  /** 实时语音音色（百炼 realtime 音色名，如 Cherry） */
+  /** 实时语音音色（与回复朗读 ttsVoice 独立，如 Tina） */
   realtimeVoice: string
   siderCollapsed: boolean
 }
@@ -110,6 +111,16 @@ const initialThemePreference = (): ThemePreference => {
 /** 未保存过时使用服务端默认音色 stella（海星） */
 const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
 
+const initialRealtimeModel = read(KEYS.realtimeModel)
+const savedRealtimeVoice = read(KEYS.realtimeVoice)
+const initialRealtimeVoice = resolveRealtimeVoice(
+  initialRealtimeModel,
+  savedRealtimeVoice ?? DEFAULT_REALTIME_VOICE
+)
+if (initialRealtimeVoice !== savedRealtimeVoice) {
+  write(KEYS.realtimeVoice, initialRealtimeVoice)
+}
+
 export const useSettings = create<Settings>(() => ({
   apiKey: read(KEYS.apiKey),
   locale: initialLocale(),
@@ -122,8 +133,8 @@ export const useSettings = create<Settings>(() => ({
   thinking: read(KEYS.thinking) === 'true',
   search: read(KEYS.search) === 'true',
   mcp: read(KEYS.mcp) === 'true',
-  realtimeModel: read(KEYS.realtimeModel),
-  realtimeVoice: read(KEYS.realtimeVoice) ?? DEFAULT_REALTIME_VOICE,
+  realtimeModel: initialRealtimeModel,
+  realtimeVoice: initialRealtimeVoice,
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
 

@@ -146,6 +146,10 @@
   max-width: min(285px, 100%);
 }
 
+.realtimeVoiceSelect {
+  width: 210px;
+}
+
 .theme {
   flex-shrink: 0;
   margin-top: 10px;

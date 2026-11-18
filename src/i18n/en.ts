@@ -115,6 +115,9 @@ export const en = {
   settingsTtsVoice: 'Read-aloud voice',
   settingsTtsVoiceStella: 'Stella (female)',
   settingsTtsVoiceTide: 'Tide (male)',
+  settingsRealtimeVoice: 'Realtime call voice',
+  settingsRealtimeVoiceDescription:
+    'Used only for realtime calls, not read-aloud. Changes during a call apply to the next response.',
   settingsLocation: 'Location',
   settingsLocationProvince: 'Select province/region',
   settingsLocationCity: 'Select city',
@@ -213,6 +216,8 @@ export const en = {
   realtimeUnmute: 'Unmute',
   realtimeHangup: 'Hang up',
   realtimeVoiceSelector: 'Voice',
+  realtimeVoiceSearchPlaceholder: 'Search voices',
+  realtimeVoiceNoMatch: 'No matching voices',
   realtimeModelSelector: 'Realtime model',
   realtimeConnectFailed:
     'Voice call connection failed. Check your network, API Key and the gateway realtime configuration.',

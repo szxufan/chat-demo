@@ -21,6 +21,7 @@ import { base64ToBytes, bytesToBase64 } from './pcm.js'
 import { PcmPlayer } from './pcmPlayer.js'
 import { stopReadAloud } from './readAloud.js'
 import { startStreamingRecording, type StreamingRecording } from './recorder.js'
+import { isQwen38OmniModel, resolveRealtimeVoice } from './realtimeVoices.js'
 
 /**
  * 实时语音通话（百炼 Realtime，经网关 /v1/realtime 中继）。
@@ -33,17 +34,6 @@ import { startStreamingRecording, type StreamingRecording } from './recorder.js'
 const OUTPUT_SAMPLE_RATE = 24000
 /** 输入转写模型（百炼 realtime ASR）；按网关模型可调整为 qwen3-asr-flash-realtime */
 const TRANSCRIPTION_MODEL = 'gummy-realtime-v1'
-
-/** 百炼 realtime 常用音色；实际可用集合随模型而定 */
-export const REALTIME_VOICES = [
-  'Cherry',
-  'Serena',
-  'Ethan',
-  'Chelsie',
-  'Jada',
-  'Dylan',
-  'Sunny',
-] as const
 
 /** 麦克风依赖 getUserMedia，只在安全上下文可用（与语音输入一致） */
 export const REALTIME_AVAILABLE = typeof window === 'undefined' || window.isSecureContext
@@ -115,14 +105,16 @@ const send = (call: Call, payload: Record<string, unknown>) => {
   }
 }
 
-/** 会话配置：系统提示词取会话覆盖或全局设置；音色取当前选择 */
+/** 会话配置：系统提示词取会话覆盖或全局设置；Qwen3.8 与旧模型使用各自的音色字段。 */
 const sessionConfig = (call: Call) => {
   const chat = useChatStore.getState().sessionCache[call.sessionId]
   const instructions = chat?.systemPrompt ?? useSettings.getState().systemPrompt
+  const voice = useRealtime.getState().voice
+  const voiceConfig = isQwen38OmniModel(call.model) ? { audio: { output: { voice } } } : { voice }
   return {
     modalities: ['text', 'audio'],
     instructions,
-    voice: useRealtime.getState().voice,
+    ...voiceConfig,
     input_audio_format: 'pcm16',
     output_audio_format: 'pcm16',
     input_audio_transcription: { model: TRANSCRIPTION_MODEL },
@@ -371,6 +363,10 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
   if (!apiKey || !model) {
     return false
   }
+  const voice = resolveRealtimeVoice(model, realtimeVoice)
+  if (voice !== realtimeVoice) {
+    setRealtimeVoice(voice)
+  }
   const begun = beginRealtimeSession(targetSessionId)
   if (!begun) {
     return false
@@ -409,7 +405,7 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
     status: 'connecting',
     chatSessionId: sessionId,
     model,
-    voice: realtimeVoice,
+    voice,
     muted: false,
     speaking: null,
     userText: '',
@@ -478,9 +474,15 @@ export const changeRealtimeVoice = (voice: string) => {
   }
 }
 
-/** 切换实时模型：以新模型重连（已落会话的转写保留，服务端上下文重置） */
+/** 切换实时模型：校正音色并以新模型重连（已落会话的转写保留，服务端上下文重置） */
 export const changeRealtimeModel = (model: string) => {
   setRealtimeModel(model)
+  const { realtimeVoice } = useSettings.getState()
+  const voice = resolveRealtimeVoice(model, realtimeVoice)
+  if (voice !== realtimeVoice) {
+    setRealtimeVoice(voice)
+    useRealtime.setState({ voice })
+  }
   const call = current
   if (!call || call.ended) {
     return

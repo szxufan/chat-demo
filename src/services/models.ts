@@ -1,7 +1,14 @@
 import { create } from 'zustand'
 import { fetchModels } from './api/client.js'
 import type { ModelInfo } from './api/types.js'
-import { setModel, setRealtimeModel, setThinkingEffort, useSettings } from './settings.js'
+import {
+  setModel,
+  setRealtimeModel,
+  setRealtimeVoice,
+  setThinkingEffort,
+  useSettings,
+} from './settings.js'
+import { resolveRealtimeVoice } from './speech/realtimeVoices.js'
 
 /** 默认模型偏好：只用于从上游列表里挑默认值，可用模型名单完全来自上游 */
 const PREFERRED_MODEL = 'deepseek-v4-flash'
@@ -64,14 +71,24 @@ const reconcileSelection = (models: ModelInfo[]) => {
   reconcileEffort(next)
 }
 
+const reconcileRealtimeVoice = (model: string | null) => {
+  const { realtimeVoice } = useSettings.getState()
+  const next = resolveRealtimeVoice(model, realtimeVoice)
+  if (next !== realtimeVoice) {
+    setRealtimeVoice(next)
+  }
+}
+
 /** 已保存实时语音模型不在列表时挑默认：优先 omni 系列，否则第一个；列表为空则清空 */
 const reconcileRealtimeSelection = (models: ModelInfo[]) => {
   const { realtimeModel } = useSettings.getState()
   if (models.some((info) => info.id === realtimeModel)) {
+    reconcileRealtimeVoice(realtimeModel)
     return
   }
   const next = models.find((info) => info.id.toLowerCase().includes('omni')) ?? models[0]
   setRealtimeModel(next?.id ?? null)
+  reconcileRealtimeVoice(next?.id ?? null)
 }
 
 let refreshSeq = 0

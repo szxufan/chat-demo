@@ -107,6 +107,9 @@ export const zh = {
   settingsTtsVoice: '朗读音色',
   settingsTtsVoiceStella: '海星（女声）',
   settingsTtsVoiceTide: '暗潮（男声）',
+  settingsRealtimeVoice: '实时语音音色',
+  settingsRealtimeVoiceDescription:
+    '仅用于实时语音通话，不影响回复朗读；通话中切换将于下一轮回复生效。',
   settingsLocation: '位置信息',
   settingsLocationProvince: '请选择省份/地区',
   settingsLocationCity: '请选择市',
@@ -199,6 +202,8 @@ export const zh = {
   realtimeUnmute: '取消静音',
   realtimeHangup: '挂断',
   realtimeVoiceSelector: '音色',
+  realtimeVoiceSearchPlaceholder: '搜索音色',
+  realtimeVoiceNoMatch: '无匹配音色',
   realtimeModelSelector: '实时模型',
   realtimeConnectFailed: '语音通话连接失败，请检查网络、API Key 与网关 realtime 配置',
   realtimeDisconnected: '语音通话已断开',

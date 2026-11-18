@@ -5,10 +5,13 @@ import {
   changeRealtimeVoice,
   endRealtimeCall,
   getRealtimeAnalyser,
-  REALTIME_VOICES,
   toggleRealtimeMute,
   useRealtime,
 } from '../../services/speech/realtime.js'
+import {
+  getRealtimeVoiceOptions,
+  resolveRealtimeVoice,
+} from '../../services/speech/realtimeVoices.js'
 import { IconButton } from '../base/IconButton.js'
 import { IconMicOffOutline16, IconMicOutline16, IconPhoneDownFill16 } from '../base/icons.js'
 import { Select } from '../base/Select.js'
@@ -68,8 +71,11 @@ export const RealtimeCallBar = () => {
         <Select
           className={styles.select}
           ariaLabel={t('realtimeVoiceSelector')}
-          value={voice}
-          options={REALTIME_VOICES.map((name) => ({ value: name, label: name }))}
+          value={resolveRealtimeVoice(model, voice)}
+          options={getRealtimeVoiceOptions(model)}
+          searchable
+          searchPlaceholder={t('realtimeVoiceSearchPlaceholder')}
+          noMatchText={t('realtimeVoiceNoMatch')}
           onChange={changeRealtimeVoice}
         />
         <IconButton
