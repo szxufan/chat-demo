@@ -18,14 +18,16 @@ import {
 import { useIsMobile } from '../../app/viewport.js'
 import { useChatStore } from '../../services/chat/store.js'
 import { regionCodes, getRegionName, provinces } from '../../services/location.js'
-import { useModels } from '../../services/models.js'
+import { changeTtsModel, useModels } from '../../services/models.js'
 import { changeRealtimeVoice } from '../../services/speech/realtime.js'
 import {
   getRealtimeVoiceOptions,
   resolveRealtimeVoice,
 } from '../../services/speech/realtimeVoices.js'
+import { getTtsVoiceOptions, resolveTtsVoice } from '../../services/speech/ttsVoices.js'
 import {
   isChineseBrowser,
+  setAsrModel,
   setLocale,
   setLocation,
   setSystemPrompt,
@@ -105,7 +107,9 @@ const SettingsContent = () => {
             <>
               <ThemeSetting />
               <LocaleSetting />
+              <TtsModelSetting />
               <TtsVoiceSetting />
+              <AsrModelSetting />
               <RealtimeVoiceSetting />
               <LocationSetting />
               <SystemPromptSetting />
@@ -300,10 +304,38 @@ const LocaleSetting = () => {
   )
 }
 
-/** 朗读音色：stella（海星，女声）/ tide（暗潮，男声） */
+/** 朗读模型：默认 MiMo（网关未配置时回退 DeepSeek）；上游无 tts 模型时隐藏，仍走 DeepSeek 兜底 */
+const TtsModelSetting = () => {
+  const t = useTranslate()
+  const ttsModels = useModels((state) => state.ttsModels)
+  const savedModel = useSettings((state) => state.ttsModel)
+  if (ttsModels.length === 0) {
+    return null
+  }
+  return (
+    <SettingCell
+      label={t('settingsTtsModel')}
+      description={t('settingsTtsModelDescription')}
+      status={null}
+      action={
+        <Select
+          ariaLabel={t('settingsTtsModel')}
+          value={savedModel ?? ttsModels[0].id}
+          options={ttsModels.map((info) => ({ value: info.id, label: info.id }))}
+          onChange={changeTtsModel}
+        />
+      }
+    />
+  )
+}
+
+/** 朗读音色：选项随朗读模型变化（MiMo 与 DeepSeek 音色范围不同），切换模型后自动校正 */
 const TtsVoiceSetting = () => {
   const t = useTranslate()
   const ttsVoice = useSettings((state) => state.ttsVoice)
+  const savedModel = useSettings((state) => state.ttsModel)
+  const firstModel = useModels((state) => state.ttsModels[0]?.id)
+  const model = savedModel ?? firstModel ?? null
   return (
     <SettingCell
       label={t('settingsTtsVoice')}
@@ -311,12 +343,41 @@ const TtsVoiceSetting = () => {
       action={
         <Select
           ariaLabel={t('settingsTtsVoice')}
-          value={ttsVoice}
-          options={[
-            { value: 'stella', label: t('settingsTtsVoiceStella') },
-            { value: 'tide', label: t('settingsTtsVoiceTide') },
-          ]}
+          className={styles.realtimeVoiceSelect}
+          value={resolveTtsVoice(model, ttsVoice)}
+          options={getTtsVoiceOptions(model).map((option) => ({
+            value: option.value,
+            label: t(option.labelKey),
+          }))}
+          searchable
+          searchPlaceholder={t('ttsVoiceSearchPlaceholder')}
+          noMatchText={t('ttsVoiceNoMatch')}
           onChange={setTtsVoice}
+        />
+      }
+    />
+  )
+}
+
+/** 语音识别模型：默认 MiMo（网关未配置时回退 DeepSeek）；上游无 asr 模型时隐藏 */
+const AsrModelSetting = () => {
+  const t = useTranslate()
+  const asrModels = useModels((state) => state.asrModels)
+  const savedModel = useSettings((state) => state.asrModel)
+  if (asrModels.length === 0) {
+    return null
+  }
+  return (
+    <SettingCell
+      label={t('settingsAsrModel')}
+      description={t('settingsAsrModelDescription')}
+      status={null}
+      action={
+        <Select
+          ariaLabel={t('settingsAsrModel')}
+          value={savedModel ?? asrModels[0].id}
+          options={asrModels.map((info) => ({ value: info.id, label: info.id }))}
+          onChange={setAsrModel}
         />
       }
     />

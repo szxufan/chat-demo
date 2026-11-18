@@ -75,7 +75,8 @@ export const useVoiceInput = (onText: (text: string) => void) => {
       controller = new AbortController()
       controllerRef.current = controller
       setStatus('transcribing')
-      const text = await transcribe(useSettings.getState().apiKey ?? '', audio, controller.signal)
+      const { apiKey, asrModel } = useSettings.getState()
+      const text = await transcribe(apiKey ?? '', audio, controller.signal, asrModel)
       if (controller.signal.aborted || operationRef.current !== operation) {
         return
       }

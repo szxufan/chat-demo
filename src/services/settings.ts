@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { TtsVoice } from './api/speech.js'
 import { normalizeLocation, type UserLocation } from './location.js'
 import { getDefaultRealtimeVoice, resolveRealtimeVoice } from './speech/realtimeVoices.js'
+import { resolveTtsVoice } from './speech/ttsVoices.js'
 
 export type Locale = 'zh-CN' | 'en-US'
 
@@ -14,13 +15,17 @@ export const DEFAULT_SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公�
 /** 未选择实时模型时使用 Qwen3.8-Omni 默认音色；旧 Qwen3-Omni 建连时校正为 Cherry。 */
 export const DEFAULT_REALTIME_VOICE = getDefaultRealtimeVoice(null)
 
-/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读音色、系统提示词、模型与思考强度、深度思考与智能搜索开关、实时语音模型与音色、侧边栏收起状态 */
+/** 本机设置，存 localStorage：API Key、语言、主题、位置、朗读模型/音色、语音识别模型、系统提示词、模型与思考强度、深度思考与智能搜索开关、实时语音模型与音色、侧边栏收起状态 */
 type Settings = {
   apiKey: string | null
   locale: Locale
   themePreference: ThemePreference
   location: UserLocation | null
   ttsVoice: TtsVoice
+  /** 朗读所选模型 id；null 表示未选择，由模型列表服务优先选 MiMo（未配置时回退 DeepSeek） */
+  ttsModel: string | null
+  /** 语音识别所选模型 id；null 表示未选择，由模型列表服务优先选 MiMo（未配置时回退 DeepSeek） */
+  asrModel: string | null
   systemPrompt: string
   /** 所选模型 id；null 表示未选择，由模型列表服务按上游列表确定默认值 */
   model: string | null
@@ -43,6 +48,8 @@ const KEYS = {
   location: 'chat-demo:location',
   themePreference: 'chat-demo:theme-preference',
   ttsVoice: 'chat-demo:tts-voice',
+  ttsModel: 'chat-demo:tts-model',
+  asrModel: 'chat-demo:asr-model',
   systemPrompt: 'chat-demo:system-prompt',
   model: 'chat-demo:model',
   thinkingEffort: 'chat-demo:thinking-effort',
@@ -108,8 +115,13 @@ const initialThemePreference = (): ThemePreference => {
   return saved === 'light' || saved === 'dark' ? saved : 'system'
 }
 
-/** 未保存过时使用服务端默认音色 stella（海星） */
-const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
+const initialTtsModel = read(KEYS.ttsModel)
+const savedTtsVoice = read(KEYS.ttsVoice)
+/** 按已存朗读模型校正音色；未保存过时用该模型默认音色（未选模型时即 DeepSeek 的 stella） */
+const initialTtsVoice = resolveTtsVoice(initialTtsModel, savedTtsVoice)
+if (initialTtsVoice !== savedTtsVoice) {
+  write(KEYS.ttsVoice, initialTtsVoice)
+}
 
 const initialRealtimeModel = read(KEYS.realtimeModel)
 const savedRealtimeVoice = read(KEYS.realtimeVoice)
@@ -126,7 +138,9 @@ export const useSettings = create<Settings>(() => ({
   locale: initialLocale(),
   location: initialLocation(),
   themePreference: initialThemePreference(),
-  ttsVoice: initialTtsVoice(),
+  ttsVoice: initialTtsVoice,
+  ttsModel: initialTtsModel,
+  asrModel: read(KEYS.asrModel),
   systemPrompt: read(KEYS.systemPrompt) ?? DEFAULT_SYSTEM_PROMPT,
   model: read(KEYS.model),
   thinkingEffort: read(KEYS.thinkingEffort),
@@ -157,6 +171,16 @@ export const setThemePreference = (themePreference: ThemePreference) => {
 export const setTtsVoice = (ttsVoice: TtsVoice) => {
   write(KEYS.ttsVoice, ttsVoice)
   useSettings.setState({ ttsVoice })
+}
+
+export const setTtsModel = (ttsModel: string | null) => {
+  write(KEYS.ttsModel, ttsModel)
+  useSettings.setState({ ttsModel })
+}
+
+export const setAsrModel = (asrModel: string | null) => {
+  write(KEYS.asrModel, asrModel)
+  useSettings.setState({ asrModel })
 }
 
 export const setApiKey = (apiKey: string | null) => {
