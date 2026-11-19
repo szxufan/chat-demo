@@ -247,6 +247,11 @@ export const en = {
   realtimeMcpUnavailable: 'MCP tools are unavailable; continuing this call without tools',
   realtimeTranscribeFailed:
     'Speech transcription is unavailable; your words may not be saved as text',
+  realtimeSendImages: 'Send images',
+  realtimeImageConvertFailed: 'Failed to process the image. Try another one.',
+  realtimeToolBusy: 'Tools are running. Send images after they finish.',
+  realtimeImageAwaitVoice: 'Image added. Unmute and speak so the AI can see it.',
+  realtimeImageMuted: 'Unmute before sending images',
   apiKeyInvalidRetry: 'Invalid API Key. Please change it and try again.',
   insufficientBalance: 'Insufficient balance',
   rateLimited: 'Too many requests. Please try again later.',

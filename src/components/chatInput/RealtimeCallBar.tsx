@@ -1,10 +1,14 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
+import { ACCEPT } from '../../services/attachments.js'
+import { addDraftFiles, EMPTY_DRAFT, useDrafts } from '../../services/chat/drafts.js'
 import { useModels } from '../../services/models.js'
 import {
   changeRealtimeModel,
   changeRealtimeVoice,
   endRealtimeCall,
   getRealtimeAnalyser,
+  sendRealtimeImages,
   toggleRealtimeMute,
   useRealtime,
 } from '../../services/speech/realtime.js'
@@ -13,14 +17,22 @@ import {
   resolveRealtimeVoice,
 } from '../../services/speech/realtimeVoices.js'
 import { IconButton } from '../base/IconButton.js'
-import { IconMicOffOutline16, IconMicOutline16, IconPhoneDownFill16 } from '../base/icons.js'
+import {
+  IconMicOffOutline16,
+  IconMicOutline16,
+  IconPaperclipOutline16,
+  IconPhoneDownFill16,
+  IconSendOutline16,
+} from '../base/icons.js'
 import { Select } from '../base/Select.js'
+import { showToast } from '../base/toastState.js'
 import { Spectrum } from './Spectrum.js'
 import styles from './RealtimeCallBar.module.css'
 
 /**
  * 通话条：通话中替代输入区。频谱 + 状态与用户实时字幕 + 模型/音色选择 + 静音/挂断。
  * AI 回复文字直接流进消息列表，这里只显示用户侧的实时转写。
+ * 通话中可发图片：回形针/粘贴进草稿，发送后交给实时会话；草稿文字保留到挂断。
  */
 export const RealtimeCallBar = () => {
   const t = useTranslate()
@@ -31,7 +43,51 @@ export const RealtimeCallBar = () => {
   const userText = useRealtime((state) => state.userText)
   const model = useRealtime((state) => state.model)
   const voice = useRealtime((state) => state.voice)
+  const sessionId = useRealtime((state) => state.chatSessionId)
   const realtimeModels = useModels((state) => state.realtimeModels)
+  const attachments = useDrafts(
+    (state) => state.drafts.get(sessionId)?.attachments ?? EMPTY_DRAFT.attachments
+  )
+  const [sending, setSending] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const acceptFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0 || sessionId === null) {
+        return
+      }
+      const error = addDraftFiles(sessionId, files)
+      if (error) {
+        showToast(error)
+      }
+    },
+    [sessionId]
+  )
+
+  // 通话中没有文本框，挂全局粘贴监听保留粘贴上传入口
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? [])
+      if (files.length > 0) {
+        event.preventDefault()
+        acceptFiles(files)
+      }
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [acceptFiles])
+
+  const sendImages = async () => {
+    if (sending) {
+      return
+    }
+    setSending(true)
+    try {
+      await sendRealtimeImages()
+    } finally {
+      setSending(false)
+    }
+  }
 
   const statusText =
     status === 'connecting'
@@ -81,6 +137,34 @@ export const RealtimeCallBar = () => {
           noMatchText={t('realtimeVoiceNoMatch')}
           onChange={changeRealtimeVoice}
         />
+        <IconButton
+          size="m"
+          tone="tertiary"
+          icon={<IconPaperclipOutline16 />}
+          tooltip={t('uploadFile')}
+          onClick={() => fileInputRef.current?.click()}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          accept={ACCEPT}
+          onChange={(event) => {
+            acceptFiles(Array.from(event.target.files ?? []))
+            event.target.value = ''
+          }}
+        />
+        {attachments.length > 0 ? (
+          <IconButton
+            size="m"
+            tone="primary"
+            icon={<IconSendOutline16 />}
+            tooltip={t('realtimeSendImages')}
+            disabled={sending || status !== 'active' || toolRunning}
+            onClick={() => void sendImages()}
+          />
+        ) : null}
         <IconButton
           size="m"
           tone={muted ? 'primary' : 'tertiary'}

@@ -46,6 +46,7 @@ import { executeToolCall, searchTools, type McpExecution } from './tools.js'
 import {
   toSessionSummary,
   type AssistantMessage,
+  type FileAttachment,
   type Message,
   type Session,
   type SessionSummary,
@@ -838,8 +839,12 @@ export const persistRealtimeSession = (sessionId: string) => {
   }
 }
 
-/** 追加一条用户转写消息并落盘 */
-export const appendRealtimeUserMessage = (sessionId: string, text: string) => {
+/** 追加一条用户转写/图片消息并落盘；附件原件经 pendingFiles 存 IndexedDB，与 sendMessage 一致 */
+export const appendRealtimeUserMessage = (
+  sessionId: string,
+  text: string,
+  files: (FileAttachment & { blob: Blob })[] = []
+) => {
   const session = getSession(sessionId)
   if (!session || get().importingHistory || deletingSessions.has(sessionId)) {
     return
@@ -849,13 +854,26 @@ export const appendRealtimeUserMessage = (sessionId: string, text: string) => {
     id: createId(),
     role: 'user',
     content: text,
-    files: [],
+    files: files.map(({ id, serverId, name, size, isImage, mimeType }) => ({
+      id,
+      serverId,
+      name,
+      size,
+      isImage,
+      mimeType,
+    })),
     createdAt: Date.now(),
   }
   updateSession(sessionId, (s) => ({
     ...appendBranch(s, history.at(-1)?.id ?? null, [message]),
     updatedAt: Date.now(),
   }))
+  if (files.length > 0) {
+    pendingFiles.set(sessionId, [
+      ...(pendingFiles.get(sessionId) ?? []),
+      ...files.map(({ id, blob }) => ({ id, blob })),
+    ])
+  }
   persist(sessionId)
 }
 

@@ -3,6 +3,8 @@ import { showToast } from '../../components/base/toastState.js'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { API_ORIGIN } from '../api/client.js'
 import type { ChatToolCall } from '../api/types.js'
+import { resolveMimeType } from '../attachments.js'
+import { getDraft, removeDraftAttachment } from '../chat/drafts.js'
 import { getReplyText } from '../chat/reply.js'
 import { executeToolCall, type McpExecution, type ToolExecution } from '../chat/tools.js'
 import {
@@ -24,6 +26,7 @@ import { base64ToBytes, bytesToBase64 } from './pcm.js'
 import { PcmPlayer } from './pcmPlayer.js'
 import { stopReadAloud } from './readAloud.js'
 import { startStreamingRecording, type StreamingRecording } from './recorder.js'
+import { toRealtimeJpeg } from './realtimeImage.js'
 import { isQwen38OmniModel, resolveRealtimeVoice } from './realtimeVoices.js'
 
 /**
@@ -44,6 +47,8 @@ const TOOL_WRAP_UP_PROMPT =
   'The tool-call round limit has been reached; no more tool calls are allowed. Use the tool results above to give your final answer directly. If they are insufficient, answer with what you have and briefly note what is missing.'
 /** 当前官方 Function Calling 文档明确覆盖 Qwen3.5 / Qwen3.8 Omni Realtime */
 const FUNCTION_CALLING_MODEL = /qwen3\.(?:5|8)-omni/i
+/** 多张图片上行间隔：服务端建议约 1 张/秒，静态图片批量发送用更小间隔 */
+const IMAGE_APPEND_INTERVAL_MS = 200
 
 /** 麦克风依赖 getUserMedia，只在安全上下文可用（与语音输入一致） */
 export const REALTIME_AVAILABLE = typeof window === 'undefined' || window.isSecureContext
@@ -92,6 +97,8 @@ type Call = {
   player: PcmPlayer
   recording: StreamingRecording | null
   activating: boolean
+  /** 是否已上行过音频；服务端要求图片 append 前至少有一帧音频，静音开局时不满足 */
+  audioAppended: boolean
   model: string
   mcpRequested: boolean
   mcpToolset: McpToolset | null
@@ -518,6 +525,7 @@ const activate = async (call: Call) => {
         return
       }
       send(call, { type: 'input_audio_buffer.append', audio: bytesToBase64(frame) })
+      call.audioAppended = true
     })
     if (call.ended || current !== call) {
       recording.stop()
@@ -762,6 +770,7 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
     player,
     recording: null,
     activating: false,
+    audioAppended: false,
     model,
     mcpRequested: mcp && FUNCTION_CALLING_MODEL.test(model),
     mcpToolset: null,
@@ -859,6 +868,94 @@ export const endRealtimeCall = () => {
 /** 静音切换：静音期间不上行音频，服务端 VAD 不会触发 */
 export const toggleRealtimeMute = () => {
   useRealtime.setState({ muted: !useRealtime.getState().muted })
+}
+
+/**
+ * 通话中发送草稿图片：转码为 JPEG 追加进服务端图像缓冲区，原件按普通用户消息落会话。
+ * 用户正在说话时图片并入当前语音轮（VAD 在 speech_stopped 自动提交并触发回复）；
+ * 静音时图片只进缓冲区、不 commit，随下一轮语音提交（从未上行音频时保留草稿待取消静音）；
+ * 否则手动 commit 图像/音频缓冲区并 response.create，让模型立即看图回应。
+ * 百炼 Realtime 不支持 user 文本 item，草稿文字原样保留。
+ */
+export const sendRealtimeImages = async (): Promise<boolean> => {
+  const call = current
+  if (!call || call.ended || !call.sessionReady || useRealtime.getState().status !== 'active') {
+    return false
+  }
+  if (call.toolBatchController !== null || call.continuationExpected) {
+    showToast({ key: 'realtimeToolBusy' })
+    return false
+  }
+  if (useRealtime.getState().muted && !call.audioAppended) {
+    // 静音开局从未上行音频，图片 append 的前置条件不满足；保留草稿，取消静音后再发
+    showToast({ key: 'realtimeImageMuted' })
+    return false
+  }
+  const attachments = getDraft(call.sessionId).attachments
+  if (attachments.length === 0) {
+    return false
+  }
+  let images: string[]
+  try {
+    images = []
+    // 串行转码：单张位图解码后可达数 MB，批量附件并行转码会造成内存峰值
+    for (const attachment of attachments) {
+      images.push(await toRealtimeJpeg(attachment.file))
+    }
+  } catch {
+    showToast({ key: 'realtimeImageConvertFailed' })
+    return false
+  }
+  if (current !== call || call.ended) {
+    return false
+  }
+  // 先落历史再上行：即使随后断线，图片也留在会话里
+  appendRealtimeUserMessage(
+    call.sessionId,
+    '',
+    attachments.map((attachment) => ({
+      id: attachment.id,
+      serverId: null,
+      name: attachment.file.name,
+      size: attachment.file.size,
+      isImage: attachment.isImage,
+      mimeType: resolveMimeType(attachment.file),
+      blob: attachment.file,
+    }))
+  )
+  if (call.firstQuestion === null) {
+    call.firstQuestion = '[图片]'
+  }
+  // 只移除已发送的附件，保留草稿文字（Realtime 无法发送文本）
+  attachments.forEach((attachment) => removeDraftAttachment(call.sessionId, attachment.id))
+  if (call.responding && !useRealtime.getState().muted) {
+    // 与用户开口打断一致：取消进行中的回复，图片轮随后接管；静音时不打断，避免只剩静默
+    call.cancellingResponse = true
+    send(call, { type: 'response.cancel' })
+    call.player.flush()
+  }
+  for (const [index, image] of images.entries()) {
+    if (index > 0) {
+      await new Promise((resolve) => setTimeout(resolve, IMAGE_APPEND_INTERVAL_MS))
+      if (current !== call || call.ended) {
+        return false
+      }
+    }
+    send(call, { type: 'input_image_buffer.append', image })
+  }
+  if (useRealtime.getState().muted) {
+    // 静音期间不上行音频，commit 会因空缓冲区报错；图片已进缓冲区，随下一轮语音提交
+    showToast({ key: 'realtimeImageAwaitVoice' })
+    return true
+  }
+  if (useRealtime.getState().speaking === 'user') {
+    // 图片已赶上本轮语音，服务端断句时一并提交
+    return true
+  }
+  // 麦克风持续上行，音频缓冲区非空；commit 同时提交图像缓冲区，但不触发回复
+  send(call, { type: 'input_audio_buffer.commit' })
+  send(call, { type: 'response.create', response: { modalities: ['text', 'audio'] } })
+  return true
 }
 
 /** 切换音色：持久化并通知服务端，下一轮回复生效 */

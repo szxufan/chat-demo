@@ -92,7 +92,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
       const selectCrushed = [
         ...toggles.querySelectorAll<HTMLElement>(`.${styles.toolbarSelect}`),
       ].some((select) => {
-        const label = select.querySelector<HTMLElement>("span:first-child")
+        const label = select.querySelector<HTMLElement>('span:first-child')
         if (!label || label.scrollWidth <= label.clientWidth) {
           return false
         }
@@ -180,7 +180,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
     }
   }
 
-  // 通话中由通话条接管输入区；文字与附件仍由草稿服务保留
+  // 通话中由通话条接管输入区；文字与附件仍由草稿服务保留，附件缩略图照常展示
   if (inCall) {
     return (
       <div
@@ -190,6 +190,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
           sessionId === null ? styles.home : styles.session
         )}
       >
+        <DraftAttachments items={attachments} onRemove={removeFile} />
         <RealtimeCallBar />
       </div>
     )
