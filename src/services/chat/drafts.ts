@@ -17,9 +17,17 @@ type Draft = { text: string; attachments: DraftAttachment[] }
 export const EMPTY_DRAFT: Draft = { text: '', attachments: [] }
 
 /** 草稿只保存在本次页面的内存中，独立于会话详情缓存；null 是新对话的草稿。 */
-export const useDrafts = create<{ drafts: Map<string | null, Draft> }>(() => ({
+export const useDrafts = create<{
+  drafts: Map<string | null, Draft>
+  /** 尚未创建的新对话的系统提示词覆盖；undefined 表示跟随全局，首次发送创建会话后清除。 */
+  newChatSystemPrompt: string | undefined
+}>(() => ({
   drafts: new Map(),
+  newChatSystemPrompt: undefined,
 }))
+
+export const setNewChatSystemPrompt = (systemPrompt: string | undefined) =>
+  useDrafts.setState({ newChatSystemPrompt: systemPrompt })
 
 export const getDraft = (sessionId: string | null): Draft =>
   useDrafts.getState().drafts.get(sessionId) ?? EMPTY_DRAFT
@@ -104,17 +112,23 @@ export const removeDraftAttachment = (sessionId: string | null, attachmentId: st
 export const clearSentDraft = (sessionId: string | null) => {
   getDraft(sessionId).attachments.forEach(releaseAttachment)
   updateDraft(sessionId, () => EMPTY_DRAFT)
+  if (sessionId === null) {
+    setNewChatSystemPrompt(undefined)
+  }
 }
 
 /** 删除会话或替换历史成功后，释放尚未发送的草稿。 */
 export const clearDraft = (sessionId: string | null) => {
   getDraft(sessionId).attachments.forEach(releaseAttachment)
   updateDraft(sessionId, () => EMPTY_DRAFT)
+  if (sessionId === null) {
+    setNewChatSystemPrompt(undefined)
+  }
 }
 
 export const clearAllDrafts = () => {
   for (const draft of useDrafts.getState().drafts.values()) {
     draft.attachments.forEach(releaseAttachment)
   }
-  useDrafts.setState({ drafts: new Map() })
+  useDrafts.setState({ drafts: new Map(), newChatSystemPrompt: undefined })
 }

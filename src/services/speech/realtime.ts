@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import { showToast } from '../../components/base/toastState.js'
 import type { TranslationMessage } from '../../i18n/index.js'
 import { API_ORIGIN } from '../api/client.js'
+import type { ChatToolCall } from '../api/types.js'
 import { getReplyText } from '../chat/reply.js'
+import { executeToolCall, type McpExecution, type ToolExecution } from '../chat/tools.js'
 import {
   appendRealtimeReply,
   appendRealtimeUserMessage,
@@ -15,6 +17,7 @@ import {
   useChatStore,
 } from '../chat/store.js'
 import type { AssistantMessage } from '../chat/types.js'
+import { getMcpToolset, type McpToolset } from '../mcp/tools.js'
 import { useModels } from '../models.js'
 import { setRealtimeModel, setRealtimeVoice, useSettings } from '../settings.js'
 import { base64ToBytes, bytesToBase64 } from './pcm.js'
@@ -34,6 +37,13 @@ import { isQwen38OmniModel, resolveRealtimeVoice } from './realtimeVoices.js'
 const OUTPUT_SAMPLE_RATE = 24000
 /** 输入转写模型（百炼 realtime ASR）；按网关模型可调整为 qwen3-asr-flash-realtime */
 const TRANSCRIPTION_MODEL = 'gummy-realtime-v1'
+/** 与文字聊天一致；达限后正常回传末轮结果，再让模型基于已有结果收尾 */
+const MCP_TOOL_ROUND_LIMIT = 80
+/** 达限收尾指令与文字聊天一致；Realtime 通过临时 session.update 撤销工具声明 */
+const TOOL_WRAP_UP_PROMPT =
+  'The tool-call round limit has been reached; no more tool calls are allowed. Use the tool results above to give your final answer directly. If they are insufficient, answer with what you have and briefly note what is missing.'
+/** 当前官方 Function Calling 文档明确覆盖 Qwen3.5 / Qwen3.8 Omni Realtime */
+const FUNCTION_CALLING_MODEL = /qwen3\.(?:5|8)-omni/i
 
 /** 麦克风依赖 getUserMedia，只在安全上下文可用（与语音输入一致） */
 export const REALTIME_AVAILABLE = typeof window === 'undefined' || window.isSecureContext
@@ -47,6 +57,8 @@ type RealtimeState = {
   model: string | null
   voice: string
   muted: boolean
+  /** 浏览器正在执行 MCP 工具，等待结果回填模型 */
+  toolRunning: boolean
   /** 当前说话方：user 用户说话 / assistant AI 回复；null 静默 */
   speaking: 'user' | 'assistant' | null
   /** 用户实时部分转写（定稿后进消息列表） */
@@ -59,21 +71,51 @@ export const useRealtime = create<RealtimeState>(() => ({
   model: null,
   voice: useSettings.getState().realtimeVoice,
   muted: false,
+  toolRunning: false,
   speaking: null,
   userText: '',
 }))
 
+type PendingFunctionCall = {
+  id: string
+  responseId: string
+  name: string
+  arguments: string
+  index: number
+}
+
 type Call = {
   sessionId: string
+  apiKey: string
   controller: AbortController
   socket: WebSocket
   player: PcmPlayer
   recording: StreamingRecording | null
+  activating: boolean
   model: string
-  /** 正在生成的回复；轮次结束置 null */
+  mcpRequested: boolean
+  mcpToolset: McpToolset | null
+  sessionInitialized: boolean
+  sessionReady: boolean
+  /** 当前用户语音逻辑轮次；可跨多个工具 Response 复用 */
   reply: AssistantMessage | null
   /** 是否有进行中的 response（打断判断） */
   responding: boolean
+  /** 本地已因用户开口取消；即使服务端迟到 done=completed 也不能执行其工具 */
+  cancellingResponse: boolean
+  responseId: string | null
+  pendingCalls: Map<string, PendingFunctionCall>
+  continuationExpected: boolean
+  /** 达限收尾需先等 tools=[] 的 session.updated，再允许续答 */
+  continuationPendingUpdate: boolean
+  /** 工具结果已发送但被用户打断时，丢弃随后到达的旧续答 */
+  discardNextResponse: boolean
+  discardingResponse: boolean
+  toolBatch: number
+  toolBatchController: AbortController | null
+  toolRounds: number
+  /** 达限后的最终续答：临时撤销工具，结束后恢复 */
+  wrappingUp: boolean
   /** 首条用户转写，用于自动补标题；触发后置 null */
   firstQuestion: string | null
   /** 当前用户轮次的部分转写 */
@@ -86,18 +128,28 @@ type Call = {
 
 let current: Call | null = null
 
+type FunctionCallPayload = {
+  response_id?: unknown
+  call_id?: unknown
+  name?: unknown
+  arguments?: unknown
+  output_index?: unknown
+}
+
 /** 服务端事件：只声明用到的字段，其余宽容忽略 */
-type ServerEvent = {
+type ServerEvent = FunctionCallPayload & {
   type?: string
   delta?: unknown
   transcript?: unknown
   text?: unknown
   stash?: unknown
   error?: { message?: unknown; code?: unknown }
-  response?: { status?: unknown }
+  response?: { id?: unknown; status?: unknown; output?: unknown }
 }
 
 const readString = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
 
 const send = (call: Call, payload: Record<string, unknown>) => {
   if (!call.ended && call.socket.readyState === WebSocket.OPEN) {
@@ -108,13 +160,21 @@ const send = (call: Call, payload: Record<string, unknown>) => {
 /** 会话配置：系统提示词取会话覆盖或全局设置；Qwen3.8 与旧模型使用各自的音色字段。 */
 const sessionConfig = (call: Call) => {
   const chat = useChatStore.getState().sessionCache[call.sessionId]
-  const instructions = chat?.systemPrompt ?? useSettings.getState().systemPrompt
+  const baseInstructions = chat?.systemPrompt ?? useSettings.getState().systemPrompt
+  const instructions = call.wrappingUp
+    ? `${baseInstructions}\n\n${TOOL_WRAP_UP_PROMPT}`
+    : baseInstructions
   const voice = useRealtime.getState().voice
   const voiceConfig = isQwen38OmniModel(call.model) ? { audio: { output: { voice } } } : { voice }
   return {
     modalities: ['text', 'audio'],
     instructions,
     ...voiceConfig,
+    ...(call.wrappingUp
+      ? { tools: [] }
+      : call.mcpToolset?.tools.length
+        ? { tools: call.mcpToolset.tools }
+        : {}),
     input_audio_format: 'pcm16',
     output_audio_format: 'pcm16',
     input_audio_transcription: { model: TRANSCRIPTION_MODEL },
@@ -157,13 +217,44 @@ const appendReplyText = (call: Call, delta: string) => {
   }
 }
 
-/** 一轮回复收尾：落盘并按需补标题 */
+/** 工具回调与文本增量共用同一份可变回复，避免整体 flush 覆盖工具块 */
+const updateCurrentReply = (call: Call, update: (reply: AssistantMessage) => AssistantMessage) => {
+  const reply = call.reply
+  if (reply) {
+    call.reply = update(reply)
+    flushReply(call)
+  }
+}
+
+/** 使旧工具批次失效；Abort 只取消当前批次，不结束整通电话 */
+const invalidateToolBatch = (call: Call) => {
+  call.toolBatch += 1
+  call.toolBatchController?.abort()
+  call.toolBatchController = null
+  call.pendingCalls.clear()
+  if (current === call) {
+    useRealtime.setState({ toolRunning: false })
+  }
+}
+
+/** 一个用户语音轮次收尾：工具中间 Response 不调用这里 */
 const finishResponse = (call: Call, status: 'done' | 'stopped') => {
+  const restoreTools = call.wrappingUp
+  call.wrappingUp = false
+  invalidateToolBatch(call)
   flushReply(call)
   const reply = call.reply
   call.reply = null
   call.responding = false
-  useRealtime.setState({ speaking: null })
+  call.cancellingResponse = false
+  call.responseId = null
+  call.continuationExpected = false
+  call.continuationPendingUpdate = false
+  call.discardingResponse = false
+  useRealtime.setState({ speaking: null, toolRunning: false })
+  if (restoreTools && current === call && !call.ended && call.sessionReady) {
+    send(call, { type: 'session.update', session: sessionConfig(call) })
+  }
   if (!reply) {
     return
   }
@@ -174,6 +265,162 @@ const finishResponse = (call: Call, status: 'done' | 'stopped') => {
     const answer = getReplyText(reply)
     if (answer.trim()) {
       requestRealtimeTitle(call.sessionId, question, answer)
+    }
+  }
+}
+
+/** done 事件已带完整参数；response.done.output 仅用于补齐漏收事件并按 call_id 去重 */
+const collectFunctionCall = (
+  call: Call,
+  value: FunctionCallPayload,
+  responseIdFallback?: string
+) => {
+  if (!call.responding || call.cancellingResponse || call.discardingResponse || !call.mcpToolset) {
+    return
+  }
+  const id = readString(value.call_id)
+  const name = readString(value.name)
+  const args = readString(value.arguments)
+  const responseId = readString(value.response_id) ?? responseIdFallback ?? call.responseId ?? ''
+  if (!id || !name || args === null || (call.responseId && responseId !== call.responseId)) {
+    return
+  }
+  call.pendingCalls.set(id, {
+    id,
+    responseId,
+    name,
+    arguments: args,
+    index: typeof value.output_index === 'number' ? value.output_index : call.pendingCalls.size,
+  })
+}
+
+/** 未声明的工具必须显式失败，不能交给 executeToolCall 落入联网搜索分支 */
+const unknownToolExecution = (pending: PendingFunctionCall): ToolExecution => {
+  let input: unknown = {}
+  try {
+    input = JSON.parse(pending.arguments)
+  } catch {
+    // 与 MCP 执行器一致，非法参数以空对象展示；错误通过结果回传模型
+  }
+  const message = JSON.stringify({ error: `Unknown MCP tool: ${pending.name}` })
+  const now = Date.now()
+  return {
+    blocks: [
+      {
+        type: 'mcp_tool_use',
+        id: pending.id,
+        name: pending.name,
+        input,
+        startedAt: now,
+      },
+      {
+        type: 'mcp_tool_result',
+        tool_use_id: pending.id,
+        message,
+        media: [],
+        isError: true,
+        endedAt: now,
+      },
+    ],
+    message,
+  }
+}
+
+/** 一个 Response 的全部工具作为一批执行；全部回填后只创建一次续答 */
+const runToolBatch = async (call: Call, calls: PendingFunctionCall[], wrapUp = false) => {
+  const toolset = call.mcpToolset
+  const reply = call.reply
+  if (!toolset || !reply) {
+    finishResponse(call, 'stopped')
+    return
+  }
+  const batch = ++call.toolBatch
+  const replyId = reply.id
+  const controller = new AbortController()
+  call.toolBatchController = controller
+  call.responding = false
+  useRealtime.setState({ speaking: null, toolRunning: true })
+  const isActive = () =>
+    current === call &&
+    !call.ended &&
+    call.toolBatch === batch &&
+    !controller.signal.aborted &&
+    call.reply?.id === replyId
+  const mcpExecution: McpExecution = {
+    route: toolset.route,
+    onCallBlock: (block) => {
+      if (isActive()) {
+        updateCurrentReply(call, (currentReply) => ({
+          ...currentReply,
+          blocks: [...currentReply.blocks, block],
+        }))
+      }
+    },
+    onProgress: (toolUseId, progress) => {
+      if (isActive()) {
+        updateCurrentReply(call, (currentReply) => ({
+          ...currentReply,
+          blocks: currentReply.blocks.map((block) =>
+            block.type === 'mcp_tool_use' && block.id === toolUseId ? { ...block, progress } : block
+          ),
+        }))
+      }
+    },
+  }
+  try {
+    const executions = await Promise.all(
+      calls.map(async (pending) => {
+        if (!toolset.route.has(pending.name)) {
+          return unknownToolExecution(pending)
+        }
+        const toolCall: ChatToolCall = {
+          id: pending.id,
+          type: 'function',
+          function: { name: pending.name, arguments: pending.arguments },
+          index: pending.index,
+        }
+        return executeToolCall(call.apiKey, toolCall, controller.signal, mcpExecution)
+      })
+    )
+    if (!isActive()) {
+      return
+    }
+    updateCurrentReply(call, (currentReply) => ({
+      ...currentReply,
+      blocks: [...currentReply.blocks, ...executions.flatMap((execution) => execution.blocks)],
+    }))
+    if (call.socket.readyState !== WebSocket.OPEN) {
+      finishResponse(call, 'stopped')
+      return
+    }
+    executions.forEach((execution, index) => {
+      send(call, {
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: calls[index].id,
+          output: execution.message || '{}',
+        },
+      })
+    })
+    call.continuationExpected = true
+    if (wrapUp) {
+      call.wrappingUp = true
+      call.continuationPendingUpdate = true
+      send(call, { type: 'session.update', session: sessionConfig(call) })
+    }
+    useRealtime.setState({ toolRunning: false })
+    if (!wrapUp) {
+      send(call, { type: 'response.create', response: { modalities: ['text', 'audio'] } })
+    }
+  } catch {
+    if (isActive()) {
+      showToast({ key: 'mcpToolFailed' })
+      finishResponse(call, 'stopped')
+    }
+  } finally {
+    if (call.toolBatch === batch) {
+      call.toolBatchController = null
     }
   }
 }
@@ -230,11 +477,41 @@ const failCall = (call: Call, message: TranslationMessage | string) => {
   showToast(message)
 }
 
-/** session.updated 后启动麦克风；授权失败或迟到结果都正确收尾 */
-const activate = async (call: Call) => {
-  if (call.ended || current !== call || call.recording) {
+/** 首次配置必须等工具发现结束；失败降级为无工具通话，不让用户首句抢跑 */
+const initializeSession = async (call: Call) => {
+  if (call.sessionInitialized) {
     return
   }
+  call.sessionInitialized = true
+  if (call.mcpRequested) {
+    try {
+      const toolset = await getMcpToolset(call.apiKey, call.controller.signal)
+      if (call.ended || current !== call) {
+        return
+      }
+      if (toolset.tools.length > 0) {
+        call.mcpToolset = toolset
+      }
+    } catch {
+      if (call.ended || current !== call || call.controller.signal.aborted) {
+        return
+      }
+      showToast({ key: 'realtimeMcpUnavailable' })
+    }
+  }
+  if (call.ended || current !== call) {
+    return
+  }
+  call.sessionReady = true
+  send(call, { type: 'session.update', session: sessionConfig(call) })
+}
+
+/** session.updated 后启动麦克风；授权失败或迟到结果都正确收尾 */
+const activate = async (call: Call) => {
+  if (call.ended || current !== call || call.recording || call.activating) {
+    return
+  }
+  call.activating = true
   try {
     const recording = await startStreamingRecording((frame) => {
       if (call.ended || current !== call || useRealtime.getState().muted) {
@@ -250,6 +527,8 @@ const activate = async (call: Call) => {
     useRealtime.setState({ status: 'active' })
   } catch (error) {
     failCall(call, describeMicError(error))
+  } finally {
+    call.activating = false
   }
 }
 
@@ -265,19 +544,34 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
   }
   switch (event.type) {
     case 'session.created':
-      send(call, { type: 'session.update', session: sessionConfig(call) })
+      void initializeSession(call)
       break
     case 'session.updated':
+      if (call.continuationPendingUpdate && call.wrappingUp && call.continuationExpected) {
+        call.continuationPendingUpdate = false
+        send(call, { type: 'response.create', response: { modalities: ['text', 'audio'] } })
+      }
       void activate(call)
       break
-    case 'input_audio_buffer.speech_started':
-      // 打断：取消进行中的回复并清空本地播放队列
+    case 'input_audio_buffer.speech_started': {
+      // 工具执行或等待续答时没有活动 Response 可取消，本地批次必须立即失效
+      const runningTools = call.toolBatchController !== null
+      const waitingContinuation = call.continuationExpected
+      invalidateToolBatch(call)
+      if (waitingContinuation) {
+        call.discardNextResponse = true
+      }
+      if ((runningTools || waitingContinuation) && call.reply) {
+        finishResponse(call, 'stopped')
+      }
       if (call.responding) {
+        call.cancellingResponse = true
         send(call, { type: 'response.cancel' })
       }
       call.player.flush()
-      useRealtime.setState({ speaking: 'user' })
+      useRealtime.setState({ speaking: 'user', toolRunning: false })
       break
+    }
     case 'input_audio_buffer.speech_stopped':
       useRealtime.setState({ speaking: null })
       break
@@ -308,23 +602,50 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
       }
       break
     case 'response.created': {
-      // 防御：服务端未给上一轮发 done 就开新轮时，先把旧回复按已停止收尾
-      if (call.reply) {
+      const responseId = readString(event.response?.id)
+      if (call.discardNextResponse) {
+        call.discardNextResponse = false
+        call.discardingResponse = true
+        call.responseId = responseId
+        call.responding = true
+        send(call, { type: 'response.cancel' })
+        break
+      }
+      if (call.discardingResponse) {
+        if (responseId && call.responseId && responseId !== call.responseId) {
+          call.discardingResponse = false
+        } else {
+          break
+        }
+      }
+      const continuing = call.continuationExpected && call.reply !== null
+      if (call.reply && !continuing) {
         finishResponse(call, 'stopped')
       }
-      const reply = appendRealtimeReply(call.sessionId, call.model)
-      call.reply = reply
-      call.responding = true
-      useRealtime.setState({ speaking: 'assistant' })
-      if (reply) {
-        patchRealtimeReply(call.sessionId, reply.id, (existing) => ({
-          ...existing,
-          status: 'streaming',
-        }))
+      if (!call.reply) {
+        call.reply = appendRealtimeReply(call.sessionId, call.model, call.mcpToolset !== null)
+        call.toolRounds = 0
       }
+      call.responseId = responseId
+      call.pendingCalls.clear()
+      call.continuationExpected = false
+      call.responding = true
+      call.cancellingResponse = false
+      useRealtime.setState({ speaking: 'assistant', toolRunning: false })
+      updateCurrentReply(call, (reply) => ({ ...reply, status: 'streaming' }))
       break
     }
+    case 'response.function_call_arguments.done':
+      collectFunctionCall(call, event)
+      break
     case 'response.audio_transcript.delta': {
+      const responseId = readString(event.response_id)
+      if (
+        call.discardingResponse ||
+        (call.responseId && responseId && call.responseId !== responseId)
+      ) {
+        break
+      }
       const delta = readString(event.delta)
       if (delta) {
         appendReplyText(call, delta)
@@ -332,20 +653,68 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
       break
     }
     case 'response.audio.delta': {
+      const responseId = readString(event.response_id)
+      if (
+        call.discardingResponse ||
+        (call.responseId && responseId && call.responseId !== responseId)
+      ) {
+        break
+      }
       const delta = readString(event.delta)
       if (delta) {
         call.player.push(base64ToBytes(delta))
       }
       break
     }
-    case 'response.done':
-      finishResponse(call, event.response?.status === 'cancelled' ? 'stopped' : 'done')
+    case 'response.done': {
+      const responseId = readString(event.response?.id)
+      if (call.discardingResponse) {
+        if (!responseId || !call.responseId || responseId === call.responseId) {
+          call.discardingResponse = false
+          call.responding = false
+          call.responseId = null
+        }
+        break
+      }
+      if (call.responseId && responseId && call.responseId !== responseId) {
+        break
+      }
+      if (call.cancellingResponse) {
+        finishResponse(call, 'stopped')
+        break
+      }
+      if (Array.isArray(event.response?.output)) {
+        for (const item of event.response.output) {
+          if (isRecord(item) && item.type === 'function_call') {
+            collectFunctionCall(call, item, responseId ?? undefined)
+          }
+        }
+      }
+      const calls = [...call.pendingCalls.values()].sort((a, b) => a.index - b.index)
+      call.pendingCalls.clear()
+      const status = readString(event.response?.status)
+      if (status === 'cancelled' || status === 'failed' || status === 'incomplete') {
+        finishResponse(call, 'stopped')
+        break
+      }
+      if (call.wrappingUp) {
+        finishResponse(call, 'done')
+        break
+      }
+      if (calls.length > 0 && call.mcpToolset) {
+        const wrapUp = call.toolRounds + 1 >= MCP_TOOL_ROUND_LIMIT
+        call.toolRounds += 1
+        void runToolBatch(call, calls, wrapUp)
+        break
+      }
+      finishResponse(call, 'done')
       break
+    }
     case 'error':
       failCall(call, describeServerError(event.error))
       break
     default:
-      // 其余事件（output_item/content_part 等）不影响转写与播放，忽略
+      // 其余事件（output_item/content_part 等）不影响转写、工具调用与播放，忽略
       break
   }
 }
@@ -358,7 +727,7 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
   if (current || !REALTIME_AVAILABLE) {
     return false
   }
-  const { apiKey, realtimeModel, realtimeVoice } = useSettings.getState()
+  const { apiKey, realtimeModel, realtimeVoice, mcp } = useSettings.getState()
   const model = realtimeModel ?? useModels.getState().realtimeModels[0]?.id
   if (!apiKey || !model) {
     return false
@@ -387,13 +756,30 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
   }
   const call: Call = {
     sessionId,
+    apiKey,
     controller,
     socket,
     player,
     recording: null,
+    activating: false,
     model,
+    mcpRequested: mcp && FUNCTION_CALLING_MODEL.test(model),
+    mcpToolset: null,
+    sessionInitialized: false,
+    sessionReady: false,
     reply: null,
     responding: false,
+    cancellingResponse: false,
+    responseId: null,
+    pendingCalls: new Map(),
+    continuationExpected: false,
+    continuationPendingUpdate: false,
+    discardNextResponse: false,
+    discardingResponse: false,
+    toolBatch: 0,
+    toolBatchController: null,
+    toolRounds: 0,
+    wrappingUp: false,
     firstQuestion: null,
     userDraft: '',
     transcribeFailedShown: false,
@@ -407,6 +793,7 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
     model,
     voice,
     muted: false,
+    toolRunning: false,
     speaking: null,
     userText: '',
   })
@@ -434,6 +821,15 @@ export const endRealtimeCall = () => {
   }
   call.ended = true
   current = null
+  invalidateToolBatch(call)
+  call.controller.abort()
+  call.continuationExpected = false
+  call.continuationPendingUpdate = false
+  call.discardNextResponse = false
+  call.discardingResponse = false
+  call.cancellingResponse = false
+  call.wrappingUp = false
+  call.responseId = null
   call.recording?.stop()
   call.player.dispose()
   flushReply(call)
@@ -449,6 +845,7 @@ export const endRealtimeCall = () => {
     chatSessionId: null,
     model: null,
     speaking: null,
+    toolRunning: false,
     userText: '',
     muted: false,
   })
@@ -469,7 +866,7 @@ export const changeRealtimeVoice = (voice: string) => {
   setRealtimeVoice(voice)
   useRealtime.setState({ voice })
   const call = current
-  if (call && !call.ended) {
+  if (call && !call.ended && call.sessionReady) {
     send(call, { type: 'session.update', session: sessionConfig(call) })
   }
 }

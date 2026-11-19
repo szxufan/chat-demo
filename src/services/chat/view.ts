@@ -196,6 +196,7 @@ const joinTextBlocks = (
 }
 
 export const buildReplyView = (reply: AssistantMessage, streaming: boolean): ReplyView => {
+  const active = streaming && (reply.status === 'pending' || reply.status === 'streaming')
   const results = new Map<string, WebSearchToolResultBlock | WebFetchToolResultBlock>()
   const mcpResults = new Map<string, McpToolResultBlock>()
   for (const block of reply.blocks) {
@@ -281,7 +282,7 @@ export const buildReplyView = (reply: AssistantMessage, streaming: boolean): Rep
         ? result.isError
           ? 'failed'
           : 'done'
-        : streaming
+        : active
           ? 'wip'
           : 'failed'
       steps.push({

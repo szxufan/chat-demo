@@ -27,6 +27,8 @@ export const en = {
   sessionPromptDescription:
     'Set a system prompt for this chat only. Leave it empty to send no system prompt.',
   sessionPromptPlaceholder: 'Enter system prompt',
+  sessionPromptToggleTooltip:
+    'Set the system prompt for this chat. For new chats it applies on the first message.',
   more: 'More',
   close: 'Close',
   sessionHistoryTimelineLabelToday: 'Today',
@@ -116,7 +118,8 @@ export const en = {
   settingsTtsVoiceStella: 'Stella (female)',
   settingsTtsVoiceTide: 'Tide (male)',
   settingsTtsModel: 'Read-aloud model',
-  settingsTtsModelDescription: 'Defaults to MiMo; falls back to DeepSeek when not configured. Applies to the next read-aloud.',
+  settingsTtsModelDescription:
+    'Defaults to MiMo; falls back to DeepSeek when not configured. Applies to the next read-aloud.',
   settingsAsrModel: 'Speech recognition model',
   settingsAsrModelDescription: 'Defaults to MiMo; falls back to DeepSeek when not configured.',
   settingsTtsVoiceMimoDefault: 'Default voice',
@@ -241,6 +244,7 @@ export const en = {
   realtimeFailed: 'Voice call failed. Please try again later.',
   realtimeFailedDetail: 'Voice call failed: {message}',
   realtimeMicFailed: 'Failed to start the microphone; voice call ended',
+  realtimeMcpUnavailable: 'MCP tools are unavailable; continuing this call without tools',
   realtimeTranscribeFailed:
     'Speech transcription is unavailable; your words may not be saved as text',
   apiKeyInvalidRetry: 'Invalid API Key. Please change it and try again.',

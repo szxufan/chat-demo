@@ -151,7 +151,7 @@ const StepItem = ({
     case 'read_link':
       return <ReadLinkRow step={step} isLast={isLast} />
     case 'mcp_tool':
-      return <McpToolRow step={step} message={message} streaming={streaming} isLast={isLast} />
+      return <McpToolRow step={step} message={message} isLast={isLast} />
     default:
       return null
   }

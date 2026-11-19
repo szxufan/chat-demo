@@ -76,12 +76,10 @@ const MediaItem = ({ media }: { media: McpMedia }) => {
 export const McpToolRow = ({
   step,
   message,
-  streaming,
   isLast,
 }: {
   step: McpToolStep
   message: AssistantMessage
-  streaming: boolean
   isLast: boolean
 }) => {
   const t = useTranslate()
@@ -103,8 +101,7 @@ export const McpToolRow = ({
     wip && step.startedAt !== undefined
       ? Math.max(1, Math.round((Date.now() - step.startedAt) / 1000))
       : null
-  const stopped =
-    step.status === 'failed' && !streaming && message.status === 'stopped' && !step.message
+  const stopped = step.status === 'failed' && message.status === 'stopped' && !step.message
 
   let body: ReactNode
   if (wip) {

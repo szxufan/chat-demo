@@ -1,10 +1,11 @@
 import clsx from 'clsx'
-import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   IconGlobeLanguageOutline14,
   IconPaperclipOutline16,
   IconPhoneFill16,
   IconSendOutline16,
+  IconSettingsOutline14,
   IconSparkleOutline14,
   IconStopFill16,
   IconThinkOutline14,
@@ -31,6 +32,7 @@ import { useModels } from '../../services/models.js'
 import { IconButton } from '../base/IconButton.js'
 import { Tooltip } from '../base/Tooltip.js'
 import { ensureApiKey } from '../settings/settingsDialogState.js'
+import { SessionPromptModal } from '../sider/SessionPromptModal.js'
 import { DragMask, useFileDrop } from './DragMask.js'
 import { ModelSelector, ThinkingEffortSelector } from './ModelControls.js'
 import { showToast } from '../base/toastState.js'
@@ -43,7 +45,7 @@ import { Spectrum } from './Spectrum.js'
 import { useTranslate } from '../../i18n/index.js'
 import styles from './ChatInput.module.css'
 
-/** 输入框：自适应高度的文本框 + 文件 + 深度思考与智能搜索开关 + 语音输入 + 发送 / 停止 */
+/** 输入框：自适应高度的文本框 + 文件 + 深度思考、智能搜索、系统提示词开关 + 语音输入 + 发送 / 停止 */
 export const ChatInput = memo(function ChatInput({ sessionId }: { sessionId: string | null }) {
   // 切换目标时释放录音、转写和 DOM 状态；文字与附件由草稿服务保留。
   return <Input key={sessionId === null ? 'new' : `session:${sessionId}`} sessionId={sessionId} />
@@ -63,6 +65,12 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
   const mcp = useSettings((state) => state.mcp)
+  const [promptOpen, setPromptOpen] = useState(false)
+  const sessionPromptOverride = useChatStore(
+    (state) => sessionId !== null && state.sessionCache[sessionId]?.systemPrompt !== undefined
+  )
+  const newChatPromptOverride = useDrafts((state) => state.newChatSystemPrompt !== undefined)
+  const promptOverride = sessionId === null ? newChatPromptOverride : sessionPromptOverride
   const realtimeModels = useModels((state) => state.realtimeModels)
   const inCall = useRealtime(
     (state) => state.status !== 'idle' && state.chatSessionId === sessionId
@@ -261,6 +269,18 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
               <span className={styles.toggleLabel}>{t('mcpTools')}</span>
             </button>
           </Tooltip>
+          <Tooltip content={t('sessionPromptToggleTooltip')}>
+            <button
+              type="button"
+              className={clsx(styles.toggle, promptOverride && styles.selected)}
+              aria-label={t('sessionItemMenuSystemPromptOption')}
+              aria-haspopup="dialog"
+              onClick={() => setPromptOpen(true)}
+            >
+              <IconSettingsOutline14 />
+              <span className={styles.toggleLabel}>{t('sessionItemMenuSystemPromptOption')}</span>
+            </button>
+          </Tooltip>
         </div>
         <div className={styles.right}>
           <IconButton
@@ -342,6 +362,9 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
           )}
         </div>
       </div>
+      {promptOpen ? (
+        <SessionPromptModal sessionId={sessionId} onClose={() => setPromptOpen(false)} />
+      ) : null}
       {dragging ? <DragMask /> : null}
     </div>
   )

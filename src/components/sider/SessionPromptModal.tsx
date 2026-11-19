@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
+import { setNewChatSystemPrompt, useDrafts } from '../../services/chat/drafts.js'
 import { readSessionSystemPrompt, setSessionSystemPrompt } from '../../services/chat/store.js'
 import { useSettings } from '../../services/settings.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import styles from './SessionPromptModal.module.css'
 
-/** 会话级系统提示词编辑：勾选「跟随全局设置」清除覆盖，否则保存输入内容（允许为空）。 */
+/**
+ * 会话级系统提示词编辑：勾选「跟随全局设置」清除覆盖，否则保存输入内容（允许为空）。
+ * sessionId 为 null 时编辑尚未创建的新对话，覆盖值暂存到草稿服务，首次发送时附加到会话。
+ */
 export const SessionPromptModal = ({
   sessionId,
   onClose,
 }: {
-  sessionId: string
+  sessionId: string | null
   onClose: () => void
 }) => {
   const t = useTranslate()
@@ -24,6 +28,14 @@ export const SessionPromptModal = ({
     let cancelled = false
     setEditor(null)
     setLoadFailed(false)
+    if (sessionId === null) {
+      const pending = useDrafts.getState().newChatSystemPrompt
+      setEditor({
+        followGlobal: pending === undefined,
+        draft: pending ?? useSettings.getState().systemPrompt,
+      })
+      return
+    }
     void readSessionSystemPrompt(sessionId)
       .then((session) => {
         if (cancelled) {
@@ -52,7 +64,12 @@ export const SessionPromptModal = ({
     if (!editor) {
       return
     }
-    setSessionSystemPrompt(sessionId, editor.followGlobal ? undefined : editor.draft.trim())
+    const value = editor.followGlobal ? undefined : editor.draft.trim()
+    if (sessionId === null) {
+      setNewChatSystemPrompt(value)
+    } else {
+      setSessionSystemPrompt(sessionId, value)
+    }
     onClose()
   }
 

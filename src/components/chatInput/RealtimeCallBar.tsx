@@ -27,6 +27,7 @@ export const RealtimeCallBar = () => {
   const status = useRealtime((state) => state.status)
   const speaking = useRealtime((state) => state.speaking)
   const muted = useRealtime((state) => state.muted)
+  const toolRunning = useRealtime((state) => state.toolRunning)
   const userText = useRealtime((state) => state.userText)
   const model = useRealtime((state) => state.model)
   const voice = useRealtime((state) => state.voice)
@@ -39,9 +40,11 @@ export const RealtimeCallBar = () => {
         ? t('realtimeMuted')
         : speaking === 'user'
           ? t('realtimeUserSpeaking')
-          : speaking === 'assistant'
-            ? t('realtimeAssistantSpeaking')
-            : t('realtimeListening')
+          : toolRunning
+            ? t('mcpToolRunning')
+            : speaking === 'assistant'
+              ? t('realtimeAssistantSpeaking')
+              : t('realtimeListening')
 
   return (
     <div className={styles.bar}>

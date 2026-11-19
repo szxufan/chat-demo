@@ -28,6 +28,8 @@ import {
   clearSentDraft,
   getDraft,
   prepareDraftMessage,
+  setNewChatSystemPrompt,
+  useDrafts,
 } from './drafts.js'
 import { createLatestReminder } from './latestReminder.js'
 import { getMcpToolset, type McpToolset } from '../mcp/tools.js'
@@ -609,6 +611,7 @@ export const sendMessage = (targetSessionId: string | null) => {
     return false
   }
   if (sessionId === null) {
+    const pendingPrompt = useDrafts.getState().newChatSystemPrompt
     const session: Session = {
       id: createId(),
       title: '',
@@ -616,6 +619,7 @@ export const sendMessage = (targetSessionId: string | null) => {
       updatedAt: now,
       messages: [],
       rootMessageId: null,
+      ...(pendingPrompt !== undefined ? { systemPrompt: pendingPrompt } : {}),
     }
     sessionId = session.id
     touchSession(session.id)
@@ -794,6 +798,7 @@ export const beginRealtimeSession = (
     }
   } else {
     const now = Date.now()
+    const pendingPrompt = useDrafts.getState().newChatSystemPrompt
     const session: Session = {
       id: createId(),
       title: '',
@@ -801,6 +806,7 @@ export const beginRealtimeSession = (
       updatedAt: now,
       messages: [],
       rootMessageId: null,
+      ...(pendingPrompt !== undefined ? { systemPrompt: pendingPrompt } : {}),
     }
     sessionId = session.id
     touchSession(session.id)
@@ -809,6 +815,7 @@ export const beginRealtimeSession = (
       sessionCache: { ...state.sessionCache, [session.id]: session },
       activeId: session.id,
     }))
+    setNewChatSystemPrompt(undefined)
   }
   const controller = new AbortController()
   set((state) => ({ streaming: { ...state.streaming, [sessionId]: controller } }))
@@ -855,7 +862,8 @@ export const appendRealtimeUserMessage = (sessionId: string, text: string) => {
 /** 创建实时回复（pending）并落盘；返回回复对象，条件不满足返回 null */
 export const appendRealtimeReply = (
   sessionId: string,
-  model: ChatModel
+  model: ChatModel,
+  mcp = false
 ): AssistantMessage | null => {
   const session = getSession(sessionId)
   if (!session || get().importingHistory || deletingSessions.has(sessionId)) {
@@ -869,7 +877,7 @@ export const appendRealtimeReply = (
     model,
     thinking: false,
     search: false,
-    mcp: false,
+    mcp,
     // realtime 模型不一定支持 chat/completions，不允许作为续写前缀
     prefix: false,
     status: 'pending',
