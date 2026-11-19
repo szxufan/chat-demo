@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import { toSessionSummary, type Session, type SessionSummary } from './types.js'
+import { collectFileIds, toSessionSummary, type Session, type SessionSummary } from './types.js'
 
 /** IndexedDB 存储结构版本；新增或调整存储、索引时递增。 */
 const DB_VERSION = 11
@@ -35,19 +35,7 @@ let dbPromise: Promise<IDBPDatabase<ChatDB>> | null = null
 
 const storedSummary = (session: Session): StoredSessionSummary => ({
   ...toSessionSummary(session),
-  fileIds: [
-    ...new Set(
-      session.messages.flatMap((message) =>
-        message.role === 'user'
-          ? message.files.map((file) => file.id)
-          : message.blocks.flatMap((block) =>
-              block.type === 'mcp_tool_result'
-                ? block.media.flatMap((media) => (media.fileId ? [media.fileId] : []))
-                : []
-            )
-      )
-    ),
-  ],
+  fileIds: [...collectFileIds(session.messages)],
 })
 
 const abortTransaction = (tx: { abort(): void }) => {
@@ -87,7 +75,26 @@ export const loadSessionSummaries = async (): Promise<SessionSummary[]> =>
 export const loadSession = async (id: string): Promise<Session | undefined> =>
   (await getDB()).get('sessions', id)
 
-export const saveSession = async (session: Session, files: StoredFile[] = []): Promise<void> => {
+/** 逐条游标遍历会话详情供全文搜索；skipIds 内的会话不读取值，避免反序列化整条记录。 */
+export const scanSessions = async (
+  skipIds: ReadonlySet<string>,
+  visit: (session: Session) => void
+): Promise<void> => {
+  const tx = (await getDB()).transaction('sessions', 'readonly')
+  for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
+    if (!skipIds.has(cursor.key)) {
+      visit(cursor.value)
+    }
+  }
+  await tx.done
+}
+
+/** 保存会话；pruneFileIds 为本次删除消息后不再被引用的原件候选，同事务内确认无会话引用后清理。 */
+export const saveSession = async (
+  session: Session,
+  files: StoredFile[] = [],
+  pruneFileIds: string[] = []
+): Promise<void> => {
   const summary = storedSummary(session)
   const tx = (await getDB()).transaction(['sessions', 'sessionSummaries', 'files'], 'readwrite')
   await Promise.all([
@@ -97,7 +104,13 @@ export const saveSession = async (session: Session, files: StoredFile[] = []): P
           await tx.objectStore('files').put(file)
         }
         await tx.objectStore('sessions').put(session)
-        await tx.objectStore('sessionSummaries').put(summary)
+        const summaries = tx.objectStore('sessionSummaries')
+        await summaries.put(summary)
+        for (const id of pruneFileIds) {
+          if ((await summaries.index('fileIds').count(id)) === 0) {
+            await tx.objectStore('files').delete(id)
+          }
+        }
       } catch (error) {
         abortTransaction(tx)
         throw error

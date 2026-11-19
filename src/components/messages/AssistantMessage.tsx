@@ -1,7 +1,7 @@
 import { useTranslate } from '../../i18n/index.js'
 import clsx from 'clsx'
 import { memo } from 'react'
-import { IconRefreshOutline16, IconWarningOutline16 } from '../base/icons.js'
+import { IconRefreshOutline16, IconTrashOutline16, IconWarningOutline16 } from '../base/icons.js'
 import { describeReply } from '../../services/chat/describe.js'
 import { canContinueReply } from '../../services/chat/reply.js'
 import { continueReply, regenerateReply } from '../../services/chat/store.js'
@@ -34,6 +34,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   busy,
   versions,
   onSelectVersion,
+  onDelete,
 }: {
   sessionId: string
   message: AssistantMessageType
@@ -42,6 +43,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   busy: boolean
   versions: MessageVersions
   onSelectVersion: SelectMessageVersion
+  onDelete: (message: AssistantMessageType) => void
 }) {
   const t = useTranslate()
   const view = useReplyView(message, streaming)
@@ -155,6 +157,13 @@ export const AssistantMessage = memo(function AssistantMessage({
                 stopReadAloud()
                 regenerateReply(sessionId, message.id)
               }}
+            />
+            <IconButton
+              icon={<IconTrashOutline16 />}
+              tooltip={t('deleteMessage')}
+              tooltipPlacement="bottom"
+              disabled={busy}
+              onClick={() => onDelete(message)}
             />
           </div>
           {isLast && canContinueReply(message) ? (

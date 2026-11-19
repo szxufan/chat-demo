@@ -115,3 +115,65 @@ export const selectVersion = (original: Session, messageId: string): Session => 
     ),
   }
 }
+
+/**
+ * 删除消息及其全部后代（含其他分支上的后续对话），保持树完整：不产生悬空 parentId，
+ * 幸存节点指向被删子节点的选择回退到创建顺序最近的幸存兄弟（优先前一个），无兄弟则清除。
+ * 删除根消息时会话清空；摘要锚点被删时一并清除摘要。消息不存在返回 null。
+ */
+export const removeMessageSubtree = (original: Session, messageId: string): Session | null => {
+  const session = normalizeSession(original)
+  if (!session.messages.some((message) => message.id === messageId)) {
+    return null
+  }
+  const children = new Map<string, string[]>()
+  for (const message of session.messages) {
+    if (message.parentId) {
+      const ids = children.get(message.parentId)
+      if (ids) {
+        ids.push(message.id)
+      } else {
+        children.set(message.parentId, [message.id])
+      }
+    }
+  }
+  const removed = new Set([messageId])
+  const queue = [messageId]
+  for (let index = 0; index < queue.length; index++) {
+    for (const child of children.get(queue[index]) ?? []) {
+      if (!removed.has(child)) {
+        removed.add(child)
+        queue.push(child)
+      }
+    }
+  }
+  const survivors = session.messages.filter((message) => !removed.has(message.id))
+  const messages = survivors.map((message) => {
+    const selected = message.selectedChildId
+    if (!selected || !removed.has(selected)) {
+      return message
+    }
+    const siblings = children.get(message.id) ?? []
+    const position = siblings.indexOf(selected)
+    const fallback =
+      siblings.slice(0, position).findLast((id) => !removed.has(id)) ??
+      siblings.slice(position + 1).find((id) => !removed.has(id))
+    const next = { ...message }
+    if (fallback) {
+      next.selectedChildId = fallback
+    } else {
+      delete next.selectedChildId
+    }
+    return next
+  })
+  const next: Session = {
+    ...session,
+    messages,
+    rootMessageId:
+      session.rootMessageId && removed.has(session.rootMessageId) ? null : session.rootMessageId,
+  }
+  if (session.contextSummary && removed.has(session.contextSummary.anchorMessageId)) {
+    delete next.contextSummary
+  }
+  return next
+}

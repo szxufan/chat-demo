@@ -8,6 +8,7 @@ import {
   IconTrashOutline16,
 } from '../base/icons.js'
 import { renameSession, selectSession } from '../../services/chat/store.js'
+import type { SearchSnippet } from '../../services/chat/search.js'
 import type { SessionSummary } from '../../services/chat/types.js'
 import { IconButton } from '../base/IconButton.js'
 import { Menu } from '../base/Menu.js'
@@ -17,11 +18,14 @@ import styles from './SessionItem.module.css'
 export const SessionItem = memo(function SessionItem({
   session,
   active,
+  snippet,
   onDelete,
   onEditPrompt,
 }: {
   session: SessionSummary
   active: boolean
+  /** 内容搜索命中时展示匹配片段；标题命中无片段 */
+  snippet?: SearchSnippet
   onDelete: () => void
   onEditPrompt: () => void
 }) {
@@ -56,13 +60,24 @@ export const SessionItem = memo(function SessionItem({
 
   return (
     <div
-      className={clsx(styles.item, active && styles.active)}
+      className={clsx(styles.item, active && styles.active, snippet && styles.itemWithSnippet)}
       onClick={() => {
         selectSession(session.id)
         closeMobileSider()
       }}
     >
-      <div className={styles.title}>{displayTitle}</div>
+      <div className={styles.itemText}>
+        <div className={styles.title}>{displayTitle}</div>
+        {snippet ? (
+          <div className={styles.snippet}>
+            {snippet.text.slice(0, snippet.start)}
+            <mark className={styles.snippetMark}>
+              {snippet.text.slice(snippet.start, snippet.end)}
+            </mark>
+            {snippet.text.slice(snippet.end)}
+          </div>
+        ) : null}
+      </div>
       <div className={styles.action} onClick={(event) => event.stopPropagation()}>
         <Menu
           options={[

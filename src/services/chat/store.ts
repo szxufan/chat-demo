@@ -8,7 +8,13 @@ import type { ChatMessageParam, ChatModel, ChatToolCall } from '../api/types.js'
 import { readImageDataUrl } from '../attachments.js'
 import { useModels } from '../models.js'
 import { useSettings } from '../settings.js'
-import { appendBranch, getVisibleMessages, normalizeSession, selectVersion } from './branches.js'
+import {
+  appendBranch,
+  getVisibleMessages,
+  normalizeSession,
+  removeMessageSubtree,
+  selectVersion,
+} from './branches.js'
 import {
   chunkRoundsForSummary,
   contextBudget,
@@ -44,6 +50,7 @@ import {
 } from './reply.js'
 import { executeToolCall, searchTools, type McpExecution } from './tools.js'
 import {
+  collectFileIds,
   toSessionSummary,
   type AssistantMessage,
   type FileAttachment,
@@ -194,7 +201,7 @@ const updateReply = (sessionId: string, reply: AssistantMessage) =>
     ),
   }))
 
-const persist = (sessionId: string) => {
+const persist = (sessionId: string, pruneFileIds?: string[]) => {
   const session = getSession(sessionId)
   if (session) {
     unsavedSessions.add(sessionId)
@@ -204,7 +211,7 @@ const persist = (sessionId: string) => {
     const epoch = historyEpoch
     const files = pendingFiles.get(sessionId)
     void db
-      .saveSession(session, files)
+      .saveSession(session, files, pruneFileIds)
       .then(() => {
         if (epoch !== historyEpoch || !getSession(sessionId)) {
           return
@@ -235,7 +242,7 @@ const persist = (sessionId: string) => {
 
 export const retrySaveSessions = () => {
   if (!get().importingHistory) {
-    unsavedSessions.forEach(persist)
+    unsavedSessions.forEach((id) => persist(id))
   }
 }
 
@@ -734,6 +741,26 @@ export const selectMessageVersion = (sessionId: string, messageId: string) => {
   }
   updateSession(sessionId, (session) => selectVersion(session, messageId))
   persist(sessionId)
+}
+
+/** 删除消息及其全部后代（含其他分支的后续对话）；不再被任何会话引用的本地原件随保存一并清理。 */
+export const deleteMessage = (sessionId: string, messageId: string): boolean => {
+  if (get().importingHistory || deletingSessions.has(sessionId)) {
+    return false
+  }
+  const session = getSession(sessionId)
+  if (!session || getStreamController(sessionId)) {
+    return false
+  }
+  const next = removeMessageSubtree(session, messageId)
+  if (!next) {
+    return false
+  }
+  const remaining = collectFileIds(next.messages)
+  const pruneFileIds = [...collectFileIds(session.messages)].filter((id) => !remaining.has(id))
+  updateSession(sessionId, () => ({ ...next, updatedAt: Date.now() }))
+  persist(sessionId, pruneFileIds)
+  return true
 }
 
 /** 继续最后一条未完成的回答：保留原消息与开关，仅将新流的内容追加到原块之后。 */

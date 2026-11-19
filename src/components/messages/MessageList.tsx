@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useIsMobile } from '../../app/viewport.js'
+import { useTranslate } from '../../i18n/index.js'
 import {
   buildMessageVersions,
   getVisibleMessages,
   type MessageVersions,
 } from '../../services/chat/branches.js'
-import { selectMessageVersion } from '../../services/chat/store.js'
-import type { Session } from '../../services/chat/types.js'
+import { deleteMessage, selectMessageVersion } from '../../services/chat/store.js'
+import type { Message, Session } from '../../services/chat/types.js'
+import { stopReadAloud } from '../../services/speech/readAloud.js'
+import { Button } from '../base/Button.js'
+import { Modal } from '../base/Modal.js'
+import { showToast } from '../base/toastState.js'
 import { closeSearchPanel } from '../search/searchPanelState.js'
 import { AssistantMessage } from './AssistantMessage.js'
 import { ScrollToBottomContext } from './scrollContext.js'
@@ -27,11 +32,13 @@ export const MessageList = ({
   footer: React.ReactNode
 }) => {
   const isMobile = useIsMobile()
+  const t = useTranslate()
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyRef = useRef(true)
   const scrollTopRef = useRef(0)
   const restoreScrollRef = useRef<{ messageId: string; top: number } | null>(null)
+  const [deleting, setDeleting] = useState<Message | null>(null)
   const messages = getVisibleMessages(session)
   const [previousVersions, setPreviousVersions] = useState(() =>
     buildMessageVersions(session, new Map())
@@ -98,6 +105,10 @@ export const MessageList = ({
     [session.id, streaming]
   )
 
+  const requestDelete = useCallback((message: Message) => {
+    setDeleting(message)
+  }, [])
+
   // 跨移动端断点时切换滚动层，并保持输入框及当前阅读位置。
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -140,6 +151,7 @@ export const MessageList = ({
                   busy={streaming}
                   versions={versions.get(message.id) ?? EMPTY_VERSIONS}
                   onSelectVersion={selectVersion}
+                  onDelete={requestDelete}
                 />
               ) : (
                 <AssistantMessage
@@ -151,6 +163,7 @@ export const MessageList = ({
                   busy={streaming}
                   versions={versions.get(message.id) ?? EMPTY_VERSIONS}
                   onSelectVersion={selectVersion}
+                  onDelete={requestDelete}
                 />
               )
             )}
@@ -158,6 +171,35 @@ export const MessageList = ({
         </div>
         {footer}
       </div>
+      {deleting ? (
+        <Modal
+          title={t('deleteMessageModalTitle')}
+          onClose={() => setDeleting(null)}
+          footer={
+            <>
+              <Button variant="outlined" onClick={() => setDeleting(null)}>
+                {t('cancel')}
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  stopReadAloud()
+                  if (deleteMessage(session.id, deleting.id)) {
+                    closeSearchPanel()
+                    setDeleting(null)
+                  } else {
+                    showToast({ key: 'messageDeleteFailed', type: 'error' })
+                  }
+                }}
+              >
+                {t('delete')}
+              </Button>
+            </>
+          }
+        >
+          {t('deleteMessageModalDescription')}
+        </Modal>
+      ) : null}
     </ScrollToBottomContext.Provider>
   )
 }

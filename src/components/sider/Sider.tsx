@@ -1,9 +1,16 @@
 import clsx from 'clsx'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
-import { IconPanelLeftOutline16, IconSettingsOutline16, NewChatIcon } from '../base/icons.js'
+import {
+  IconCloseOutline16,
+  IconPanelLeftOutline16,
+  IconSearchOutline16,
+  IconSettingsOutline16,
+  NewChatIcon,
+} from '../base/icons.js'
 import { setSiderCollapsed } from '../../services/settings.js'
 import { groupSessions } from '../../services/chat/sessionGroups.js'
+import { searchSessions, type SessionSearchResult } from '../../services/chat/search.js'
 import { newChat, removeSession, useChatStore } from '../../services/chat/store.js'
 import type { SessionSummary } from '../../services/chat/types.js'
 import { Button } from '../base/Button.js'
@@ -14,9 +21,10 @@ import { openSettings } from '../settings/settingsDialogState.js'
 import { closeMobileSider, useMobileSider } from './mobileSiderState.js'
 import { SessionItem } from './SessionItem.js'
 import { SessionPromptModal } from './SessionPromptModal.js'
+import { consumeSiderSearchFocus, useSiderSearchFocus } from './siderSearchState.js'
 import styles from './Sider.module.css'
 
-/** 展开的侧边栏：名称与收起按钮、开启新对话、按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
+/** 展开的侧边栏：名称与收起按钮、开启新对话、搜索、按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
 export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   const t = useTranslate()
   const sessions = useChatStore((state) => state.sessions)
@@ -26,6 +34,38 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   const [deleting, setDeleting] = useState<SessionSummary | null>(null)
   const [deletePending, setDeletePending] = useState(false)
   const [promptEditing, setPromptEditing] = useState<SessionSummary | null>(null)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SessionSearchResult[] | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const searchFocusPending = useSiderSearchFocus((state) => state.pending)
+  const searching = query.trim() !== ''
+
+  // 只处理收起态搜索按钮发起的聚焦请求，正常展开时不抢焦点。
+  useEffect(() => {
+    if (searchFocusPending && consumeSiderSearchFocus()) {
+      searchRef.current?.focus()
+    }
+  }, [searchFocusPending])
+
+  // 防抖搜索；会话列表变化（删除、重命名）时同步刷新结果。
+  useEffect(() => {
+    if (!searching) {
+      setResults(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void searchSessions(query).then((matches) => {
+        if (!cancelled) {
+          setResults(matches)
+        }
+      })
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [query, searching, sessions])
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
@@ -76,22 +116,71 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         </span>
         {t('newChat')}
       </button>
+      <div className={styles.searchRow}>
+        <span className={styles.searchIcon}>
+          <IconSearchOutline16 />
+        </span>
+        <input
+          ref={searchRef}
+          className={styles.searchInput}
+          type="text"
+          role="searchbox"
+          value={query}
+          placeholder={t('sessionSearchPlaceholder')}
+          aria-label={t('sessionSearchPlaceholder')}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !event.nativeEvent.isComposing && query) {
+              event.stopPropagation()
+              setQuery('')
+            }
+          }}
+        />
+        {query ? (
+          <IconButton
+            size="xs"
+            icon={<IconCloseOutline16 />}
+            aria-label={t('sessionSearchClear')}
+            onClick={() => {
+              setQuery('')
+              searchRef.current?.focus()
+            }}
+          />
+        ) : null}
+      </div>
       <div className={styles.listWrap}>
         <div className={styles.list}>
-          {groups.map((group) => (
-            <div key={group.key} className={styles.section}>
-              <div className={styles.sectionHeader}>{group.label}</div>
-              {group.sessions.map((session) => (
+          {searching ? (
+            results === null ? null : results.length === 0 ? (
+              <div className={styles.searchEmpty}>{t('sessionSearchNoMatch')}</div>
+            ) : (
+              results.map((result) => (
                 <SessionItem
-                  key={session.id}
-                  session={session}
-                  active={session.id === activeId}
-                  onDelete={() => setDeleting(session)}
-                  onEditPrompt={() => setPromptEditing(session)}
+                  key={result.session.id}
+                  session={result.session}
+                  active={result.session.id === activeId}
+                  snippet={result.snippet}
+                  onDelete={() => setDeleting(result.session)}
+                  onEditPrompt={() => setPromptEditing(result.session)}
                 />
-              ))}
-            </div>
-          ))}
+              ))
+            )
+          ) : (
+            groups.map((group) => (
+              <div key={group.key} className={styles.section}>
+                <div className={styles.sectionHeader}>{group.label}</div>
+                {group.sessions.map((session) => (
+                  <SessionItem
+                    key={session.id}
+                    session={session}
+                    active={session.id === activeId}
+                    onDelete={() => setDeleting(session)}
+                    onEditPrompt={() => setPromptEditing(session)}
+                  />
+                ))}
+              </div>
+            ))
+          )}
         </div>
       </div>
       <div className={styles.bottom}>
@@ -140,10 +229,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         </Modal>
       ) : null}
       {promptEditing ? (
-        <SessionPromptModal
-          sessionId={promptEditing.id}
-          onClose={() => setPromptEditing(null)}
-        />
+        <SessionPromptModal sessionId={promptEditing.id} onClose={() => setPromptEditing(null)} />
       ) : null}
     </div>
   )

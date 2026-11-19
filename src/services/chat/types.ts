@@ -176,3 +176,17 @@ export const toSessionSummary = (session: SessionSummary): SessionSummary => ({
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
 })
+
+/** 消息引用的全部本地原件 id：用户上传附件与 MCP 生成媒体；同一 id 可被多条消息（含兄弟版本）共用。 */
+export const collectFileIds = (messages: readonly Message[]): Set<string> =>
+  new Set(
+    messages.flatMap((message) =>
+      message.role === 'user'
+        ? message.files.map((file) => file.id)
+        : message.blocks.flatMap((block) =>
+            block.type === 'mcp_tool_result'
+              ? block.media.flatMap((media) => (media.fileId ? [media.fileId] : []))
+              : []
+          )
+    )
+  )

@@ -2,7 +2,7 @@ import { useTranslate } from '../../i18n/index.js'
 import clsx from 'clsx'
 import { memo, useLayoutEffect, useRef, useState } from 'react'
 import { useIsMobile } from '../../app/viewport.js'
-import { IconEditOutline16 } from '../base/icons.js'
+import { IconEditOutline16, IconTrashOutline16 } from '../base/icons.js'
 import { editMessage } from '../../services/chat/store.js'
 import { stopReadAloud } from '../../services/speech/readAloud.js'
 import type { UserMessage as UserMessageType } from '../../services/chat/types.js'
@@ -26,6 +26,7 @@ export const UserMessage = memo(function UserMessage({
   busy,
   versions,
   onSelectVersion,
+  onDelete,
 }: {
   sessionId: string
   message: UserMessageType
@@ -34,6 +35,7 @@ export const UserMessage = memo(function UserMessage({
   busy: boolean
   versions: MessageVersions
   onSelectVersion: SelectMessageVersion
+  onDelete: (message: UserMessageType) => void
 }) {
   const t = useTranslate()
   const [editing, setEditing] = useState(false)
@@ -118,6 +120,13 @@ export const UserMessage = memo(function UserMessage({
                   setDraft(message.content)
                   setEditing(true)
                 }}
+              />
+              <IconButton
+                icon={<IconTrashOutline16 />}
+                tooltip={t('deleteMessage')}
+                tooltipPlacement="bottom"
+                disabled={busy}
+                onClick={() => onDelete(message)}
               />
             </div>
             <BranchSwitcher versions={versions} disabled={busy} onSelect={onSelectVersion} />
