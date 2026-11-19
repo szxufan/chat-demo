@@ -56,10 +56,13 @@ const DEFAULT_MODEL: ChatModel = 'deepseek-v4-flash'
 const SESSION_CACHE_LIMIT = 5
 /** 安全审核固定开启 */
 const SAFETY_CHECK = { level: 'high' } as const
-/** 客户端工具循环（搜索/链接阅读）最多轮数；超过按 tool_use 收尾，禁止续写 */
-const TOOL_ROUND_LIMIT = 5
+/** 客户端工具循环（搜索/链接阅读）轮数上限；达到上限后仍请求工具时，末轮结果照常回传并附收尾指令让其直接作答 */
+const TOOL_ROUND_LIMIT = 50
 /** 启用 MCP 时的轮数上限：图片生成/编辑链可能更长；视频轮询在客户端内完成，不占轮数 */
-const MCP_TOOL_ROUND_LIMIT = 8
+const MCP_TOOL_ROUND_LIMIT = 80
+/** 工具轮数达到上限时下发的收尾指令：末轮结果照常回传，撤掉工具声明，要求模型直接作答 */
+const TOOL_WRAP_UP_PROMPT =
+  'The tool-call round limit has been reached; no more tool calls are allowed. Use the tool results above to give your final answer directly. If they are insufficient, answer with what you have and briefly note what is missing.'
 /** 上下文超限后的原地重试次数；每次窗口减半并截断工具结果 */
 const MAX_OVERFLOW_RETRIES = 2
 /** 超限重试时工具结果内容的字符上限 */
@@ -1063,7 +1066,8 @@ const fitContext = async (
 /**
  * 请求并消费流：先按上下文预算裁剪压缩，再内联图片发请求；流式增量按动画帧刷新内存，
  * 完成、失败或停止后落盘。模型发出 tool_calls（搜索/链接阅读）时由客户端执行并以 tool 消息
- * 回传结果继续生成，最多 TOOL_ROUND_LIMIT 轮；超过按 tool_use 收尾。
+ * 回传结果继续生成，最多 TOOL_ROUND_LIMIT 轮；超过时末轮结果照常回传，附收尾指令并撤掉
+ * 工具声明，让模型基于已有结果直接作答。
  * 上下文超限时机械裁剪原地重试。首轮完成后另发小请求补会话标题。
  */
 const streamReply = async (sessionId: string, initial: AssistantMessage, request: Request) => {
@@ -1151,6 +1155,8 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
         }
       : undefined
     let overflowRetries = 0
+    // 收尾轮：工具轮数已达上限，末轮结果已回传并附收尾指令；本轮撤掉工具声明，不再进工具循环
+    let wrappingUp = false
 
     for (let round = 0; ; ) {
       // 超限重试只丢弃本次请求的增量，保留此前已完成的工具调用与结果。
@@ -1168,7 +1174,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
             ...(initial.thinking && initial.effort ? { reasoning_effort: initial.effort } : {}),
             safety_check: SAFETY_CHECK,
-            tools,
+            ...(wrappingUp ? {} : { tools }),
           },
           controller.signal
         )
@@ -1189,7 +1195,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           }
         }
         const calls = [...toolCalls.values()].filter((call) => call.id && call.function.name)
-        if (reply.stopReason === 'tool_use' && calls.length > 0 && round < roundLimit) {
+        if (!wrappingUp && reply.stopReason === 'tool_use' && calls.length > 0) {
           const executions = await Promise.all(
             calls.map((call) => executeToolCall(apiKey, call, controller.signal, mcpExecution))
           )
@@ -1207,8 +1213,20 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
               content: execution.message,
             })),
           ]
+          if (round >= roundLimit) {
+            // 达到轮数上限：末轮结果照常回传，附收尾指令，下一轮撤掉工具声明让模型直接作答
+            toolMessages = [...toolMessages, { role: 'user', content: TOOL_WRAP_UP_PROMPT }]
+            wrappingUp = true
+          }
           flush()
           round += 1
+          continue
+        }
+        if (!wrappingUp && reply.stopReason === 'tool_use' && round >= roundLimit) {
+          // 达到上限但本轮 tool_calls 无法解析（缺 id/name）：同样附收尾指令，让模型直接作答
+          toolMessages = [...toolMessages, { role: 'user', content: TOOL_WRAP_UP_PROMPT }]
+          wrappingUp = true
+          reply = { ...reply, stopReason: undefined }
           continue
         }
         reply = settleReply(reply, 'done', Date.now())
