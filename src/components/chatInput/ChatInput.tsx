@@ -107,7 +107,13 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
     updateLabels()
     const observer = new ResizeObserver(updateLabels)
     observer.observe(toggles)
-    return () => observer.disconnect()
+    // 模型名加载、强度下拉显隐等只改内容不改容器尺寸，ResizeObserver 不触发，靠 DOM 变化补测量
+    const mutations = new MutationObserver(updateLabels)
+    mutations.observe(toggles, { childList: true, subtree: true, characterData: true })
+    return () => {
+      observer.disconnect()
+      mutations.disconnect()
+    }
   }, [t])
 
   const acceptFiles = (files: File[]) => {

@@ -256,6 +256,18 @@
   min-width: 0;
 }
 
+/* 宽屏单行：图标也放不下时横向滚动兜底，绝不溢出压到右侧按钮 */
+@media (min-width: 480px) {
+  .toggles {
+    overflow-x: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+}
+
 .collapsedToggles .toggleLabel {
   display: none;
 }
@@ -279,11 +291,17 @@
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+  outline: none;
   transition-property: border, background;
   transition-duration: 0.2s;
 
   &:hover:not(:disabled) {
     background-color: var(--dsw-alias-interactive-bg-hover);
+  }
+
+  /* 工具栏可横向滚动，外描边会被裁剪；与 Select 一致用内阴影画焦点环 */
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--dsw-alias-brand-primary);
   }
 
   &:disabled {
@@ -365,5 +383,26 @@
   &.disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+}
+
+/* 窄屏单行放不下全部控件：标签常收，开关行独占一行并允许换行，右侧按钮换到第二行右对齐 */
+@media not all and (min-width: 480px) {
+  .functionRow {
+    flex-wrap: wrap;
+  }
+
+  .toggles {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* 换行布局下下拉不再被压缩，限制模型名宽度，尽量让图标行保持单行 */
+  .toggles .toolbarSelect {
+    max-width: 100px;
+  }
+
+  .toggleLabel {
+    display: none;
   }
 }
