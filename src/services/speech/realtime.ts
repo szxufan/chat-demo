@@ -6,7 +6,12 @@ import type { ChatToolCall } from '../api/types.js'
 import { resolveMimeType } from '../attachments.js'
 import { getDraft, removeDraftAttachment } from '../chat/drafts.js'
 import { getReplyText } from '../chat/reply.js'
-import { executeToolCall, type McpExecution, type ToolExecution } from '../chat/tools.js'
+import {
+  executeToolCall,
+  type McpExecution,
+  searchTools,
+  type ToolExecution,
+} from '../chat/tools.js'
 import {
   appendRealtimeReply,
   appendRealtimeUserMessage,
@@ -27,6 +32,12 @@ import { PcmPlayer } from './pcmPlayer.js'
 import { stopReadAloud } from './readAloud.js'
 import { startStreamingRecording, type StreamingRecording } from './recorder.js'
 import { toRealtimeJpeg } from './realtimeImage.js'
+import {
+  executeTextModelTool,
+  TEXT_MODEL_TOOL_NAME,
+  textModelTool,
+  type RealtimeTextModelConfig,
+} from './realtimeTextModel.js'
 import { isQwen38OmniModel, resolveRealtimeVoice } from './realtimeVoices.js'
 
 /**
@@ -45,8 +56,13 @@ const MCP_TOOL_ROUND_LIMIT = 80
 /** 达限收尾指令与文字聊天一致；Realtime 通过临时 session.update 撤销工具声明 */
 const TOOL_WRAP_UP_PROMPT =
   'The tool-call round limit has been reached; no more tool calls are allowed. Use the tool results above to give your final answer directly. If they are insufficient, answer with what you have and briefly note what is missing.'
+const REALTIME_TOOL_PROMPT =
+  'Use tools only when they help answer the user. Use deepseek_web_search for current or obscure web information, and deepseek_read_url to read the full content of a relevant URL. Make every tool query complete and self-contained. After receiving tool results, give a concise, natural spoken answer; do not narrate the tool calls or recite long source text.'
+const TEXT_MODEL_TOOL_PROMPT =
+  'Use ask_text_model for complex reasoning, mathematics, programming, or detailed analysis. You may search or read pages before asking the text model to analyze the evidence.'
 /** 当前官方 Function Calling 文档明确覆盖 Qwen3.5 / Qwen3.8 Omni Realtime */
 const FUNCTION_CALLING_MODEL = /qwen3\.(?:5|8)-omni/i
+const WEB_TOOL_NAMES = new Set(['deepseek_web_search', 'deepseek_read_url'])
 /** 多张图片上行间隔：服务端建议约 1 张/秒，静态图片批量发送用更小间隔 */
 const IMAGE_APPEND_INTERVAL_MS = 200
 
@@ -62,7 +78,7 @@ type RealtimeState = {
   model: string | null
   voice: string
   muted: boolean
-  /** 浏览器正在执行 MCP 工具，等待结果回填模型 */
+  /** 浏览器正在执行 Realtime 工具，等待结果回填模型 */
   toolRunning: boolean
   /** 当前说话方：user 用户说话 / assistant AI 回复；null 静默 */
   speaking: 'user' | 'assistant' | null
@@ -100,6 +116,9 @@ type Call = {
   /** 是否已上行过音频；服务端要求图片 append 前至少有一帧音频，静音开局时不满足 */
   audioAppended: boolean
   model: string
+  functionCalling: boolean
+  /** 通话期间固定使用开始时的文本模型与思考配置 */
+  textModel: RealtimeTextModelConfig | null
   mcpRequested: boolean
   mcpToolset: McpToolset | null
   sessionInitialized: boolean
@@ -169,19 +188,26 @@ const sessionConfig = (call: Call) => {
   const chat = useChatStore.getState().sessionCache[call.sessionId]
   const baseInstructions = chat?.systemPrompt ?? useSettings.getState().systemPrompt
   const instructions = call.wrappingUp
-    ? `${baseInstructions}\n\n${TOOL_WRAP_UP_PROMPT}`
-    : baseInstructions
+    ? [baseInstructions, TOOL_WRAP_UP_PROMPT].filter(Boolean).join('\n\n')
+    : call.functionCalling
+      ? [baseInstructions, REALTIME_TOOL_PROMPT, call.textModel ? TEXT_MODEL_TOOL_PROMPT : '']
+          .filter(Boolean)
+          .join('\n\n')
+      : baseInstructions
   const voice = useRealtime.getState().voice
   const voiceConfig = isQwen38OmniModel(call.model) ? { audio: { output: { voice } } } : { voice }
+  const tools = call.functionCalling
+    ? [
+        ...(call.textModel ? [textModelTool] : []),
+        ...searchTools(true),
+        ...(call.mcpToolset?.tools ?? []),
+      ]
+    : []
   return {
     modalities: ['text', 'audio'],
     instructions,
     ...voiceConfig,
-    ...(call.wrappingUp
-      ? { tools: [] }
-      : call.mcpToolset?.tools.length
-        ? { tools: call.mcpToolset.tools }
-        : {}),
+    ...(call.wrappingUp ? { tools: [] } : tools.length > 0 ? { tools } : {}),
     input_audio_format: 'pcm16',
     output_audio_format: 'pcm16',
     input_audio_transcription: { model: TRANSCRIPTION_MODEL },
@@ -282,7 +308,12 @@ const collectFunctionCall = (
   value: FunctionCallPayload,
   responseIdFallback?: string
 ) => {
-  if (!call.responding || call.cancellingResponse || call.discardingResponse || !call.mcpToolset) {
+  if (
+    !call.responding ||
+    call.cancellingResponse ||
+    call.discardingResponse ||
+    !call.functionCalling
+  ) {
     return
   }
   const id = readString(value.call_id)
@@ -309,7 +340,7 @@ const unknownToolExecution = (pending: PendingFunctionCall): ToolExecution => {
   } catch {
     // 与 MCP 执行器一致，非法参数以空对象展示；错误通过结果回传模型
   }
-  const message = JSON.stringify({ error: `Unknown MCP tool: ${pending.name}` })
+  const message = JSON.stringify({ error: `Unknown Realtime tool: ${pending.name}` })
   const now = Date.now()
   return {
     blocks: [
@@ -337,7 +368,7 @@ const unknownToolExecution = (pending: PendingFunctionCall): ToolExecution => {
 const runToolBatch = async (call: Call, calls: PendingFunctionCall[], wrapUp = false) => {
   const toolset = call.mcpToolset
   const reply = call.reply
-  if (!toolset || !reply) {
+  if (!reply) {
     finishResponse(call, 'stopped')
     return
   }
@@ -353,31 +384,47 @@ const runToolBatch = async (call: Call, calls: PendingFunctionCall[], wrapUp = f
     call.toolBatch === batch &&
     !controller.signal.aborted &&
     call.reply?.id === replyId
-  const mcpExecution: McpExecution = {
-    route: toolset.route,
-    onCallBlock: (block) => {
-      if (isActive()) {
-        updateCurrentReply(call, (currentReply) => ({
-          ...currentReply,
-          blocks: [...currentReply.blocks, block],
-        }))
+  const mcpExecution: McpExecution | undefined = toolset
+    ? {
+        route: toolset.route,
+        onCallBlock: (block) => {
+          if (isActive()) {
+            updateCurrentReply(call, (currentReply) => ({
+              ...currentReply,
+              blocks: [...currentReply.blocks, block],
+            }))
+          }
+        },
+        onProgress: (toolUseId, progress) => {
+          if (isActive()) {
+            updateCurrentReply(call, (currentReply) => ({
+              ...currentReply,
+              blocks: currentReply.blocks.map((block) =>
+                block.type === 'mcp_tool_use' && block.id === toolUseId
+                  ? { ...block, progress }
+                  : block
+              ),
+            }))
+          }
+        },
       }
-    },
-    onProgress: (toolUseId, progress) => {
-      if (isActive()) {
-        updateCurrentReply(call, (currentReply) => ({
-          ...currentReply,
-          blocks: currentReply.blocks.map((block) =>
-            block.type === 'mcp_tool_use' && block.id === toolUseId ? { ...block, progress } : block
-          ),
-        }))
-      }
-    },
-  }
+    : undefined
   try {
     const executions = await Promise.all(
       calls.map(async (pending) => {
-        if (!toolset.route.has(pending.name)) {
+        if (pending.name === TEXT_MODEL_TOOL_NAME) {
+          if (!call.textModel) {
+            return unknownToolExecution(pending)
+          }
+          return executeTextModelTool(
+            call.apiKey,
+            pending.arguments,
+            call.textModel,
+            controller.signal
+          )
+        }
+        const isMcp = toolset?.route.has(pending.name) ?? false
+        if (!isMcp && !WEB_TOOL_NAMES.has(pending.name)) {
           return unknownToolExecution(pending)
         }
         const toolCall: ChatToolCall = {
@@ -496,8 +543,12 @@ const initializeSession = async (call: Call) => {
       if (call.ended || current !== call) {
         return
       }
-      if (toolset.tools.length > 0) {
-        call.mcpToolset = toolset
+      const tools = toolset.tools.filter((tool) => tool.function.name !== TEXT_MODEL_TOOL_NAME)
+      if (tools.length > 0) {
+        call.mcpToolset = {
+          tools,
+          route: new Map([...toolset.route].filter(([name]) => name !== TEXT_MODEL_TOOL_NAME)),
+        }
       }
     } catch {
       if (call.ended || current !== call || call.controller.signal.aborted) {
@@ -650,6 +701,7 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
       const responseId = readString(event.response_id)
       if (
         call.discardingResponse ||
+        call.cancellingResponse ||
         (call.responseId && responseId && call.responseId !== responseId)
       ) {
         break
@@ -664,6 +716,7 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
       const responseId = readString(event.response_id)
       if (
         call.discardingResponse ||
+        call.cancellingResponse ||
         (call.responseId && responseId && call.responseId !== responseId)
       ) {
         break
@@ -685,6 +738,10 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
         break
       }
       if (call.responseId && responseId && call.responseId !== responseId) {
+        break
+      }
+      // 工具批次运行期间父 Response 已结束；重复 done 不得提前结束整个语音轮次
+      if (!call.responding) {
         break
       }
       if (call.cancellingResponse) {
@@ -709,7 +766,7 @@ const handleMessage = (call: Call, raw: MessageEvent) => {
         finishResponse(call, 'done')
         break
       }
-      if (calls.length > 0 && call.mcpToolset) {
+      if (calls.length > 0) {
         const wrapUp = call.toolRounds + 1 >= MCP_TOOL_ROUND_LIMIT
         call.toolRounds += 1
         void runToolBatch(call, calls, wrapUp)
@@ -735,11 +792,13 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
   if (current || !REALTIME_AVAILABLE) {
     return false
   }
-  const { apiKey, realtimeModel, realtimeVoice, mcp } = useSettings.getState()
+  const settings = useSettings.getState()
+  const { apiKey, realtimeModel, realtimeVoice, mcp } = settings
   const model = realtimeModel ?? useModels.getState().realtimeModels[0]?.id
   if (!apiKey || !model) {
     return false
   }
+  const functionCalling = FUNCTION_CALLING_MODEL.test(model)
   const voice = resolveRealtimeVoice(model, realtimeVoice)
   if (voice !== realtimeVoice) {
     setRealtimeVoice(voice)
@@ -750,6 +809,16 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
   }
   const { sessionId, controller } = begun
   stopReadAloud()
+  const textModel: RealtimeTextModelConfig | null =
+    functionCalling && settings.model
+      ? {
+          model: settings.model,
+          systemPrompt:
+            useChatStore.getState().sessionCache[sessionId]?.systemPrompt ?? settings.systemPrompt,
+          thinking: settings.thinking,
+          effort: settings.thinkingEffort,
+        }
+      : null
   const url = `${API_ORIGIN.replace(/^http/, 'ws')}/v1/realtime?model=${encodeURIComponent(model)}`
   let player: PcmPlayer
   let socket: WebSocket
@@ -772,7 +841,9 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
     activating: false,
     audioAppended: false,
     model,
-    mcpRequested: mcp && FUNCTION_CALLING_MODEL.test(model),
+    functionCalling,
+    textModel,
+    mcpRequested: mcp && functionCalling,
     mcpToolset: null,
     sessionInitialized: false,
     sessionReady: false,
