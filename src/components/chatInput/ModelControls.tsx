@@ -1,3 +1,4 @@
+import clsx from 'clsx'
 import type { ModelInfo } from '../../services/api/types.js'
 import { refreshModels, selectModel, useModels } from '../../services/models.js'
 import { setThinkingEffort, useSettings } from '../../services/settings.js'
@@ -103,7 +104,7 @@ export const ThinkingEffortSelector = () => {
 
   return (
     <Select
-      className={styles.toolbarSelect}
+      className={clsx(styles.toolbarSelect, styles.effortSelect)}
       ariaLabel={t('thinkingEffortSelector')}
       value={effort ?? ''}
       options={options.map((level) => ({ value: level, label: effortLabel(level, t) }))}

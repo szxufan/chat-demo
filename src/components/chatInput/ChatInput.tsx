@@ -87,7 +87,21 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
 
     const updateLabels = () => {
       toggles.classList.remove(styles.collapsedToggles)
-      toggles.classList.toggle(styles.collapsedToggles, toggles.scrollWidth > toggles.clientWidth)
+      // 下拉框可被压缩（flex-shrink），整行未必溢出；内容被压到截断时同样收起标签。
+      // 已达 max-width 的截断是模型名本身过长，不属于空间不足（offsetWidth 含边框，与 border-box 的 max-width 对齐）。
+      const selectCrushed = [
+        ...toggles.querySelectorAll<HTMLElement>(`.${styles.toolbarSelect}`),
+      ].some((select) => {
+        const label = select.querySelector<HTMLElement>("span:first-child")
+        if (!label || label.scrollWidth <= label.clientWidth) {
+          return false
+        }
+        return select.offsetWidth < parseFloat(getComputedStyle(select).maxWidth)
+      })
+      toggles.classList.toggle(
+        styles.collapsedToggles,
+        toggles.scrollWidth > toggles.clientWidth || selectCrushed
+      )
     }
 
     updateLabels()

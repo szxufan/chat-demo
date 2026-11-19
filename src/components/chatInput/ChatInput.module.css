@@ -329,6 +329,11 @@
   }
 }
 
+/* 思考强度只有固定的短选项，不参与压缩，保证任何宽度下都完整显示；空间缺口由模型下拉吸收 */
+.toggles .effortSelect {
+  flex-shrink: 0;
+}
+
 .right {
   display: flex;
   flex-shrink: 0;

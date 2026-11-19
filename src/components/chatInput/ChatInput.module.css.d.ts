@@ -19,6 +19,7 @@ declare const styles: {
   readonly "toggle": string;
   readonly "selected": string;
   readonly "toolbarSelect": string;
+  readonly "effortSelect": string;
   readonly "right": string;
   readonly "sendButton": string;
   readonly "disabled": string;
