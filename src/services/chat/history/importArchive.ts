@@ -1,8 +1,16 @@
 import * as db from '../db.js'
+import type { Folder } from '../types.js'
 import { BackupError, fail } from './errors.js'
-import type { SessionIndexEntry } from './format.js'
-import { INDEX_PATH, MANIFEST_PATH, USER_PATH, parseSessionPath, sessionFilesDir } from './paths.js'
-import { checkManifest, readSessionFile, readSessionIndex } from './schema.js'
+import type { FolderFile, SessionIndexEntry } from './format.js'
+import {
+  FOLDERS_PATH,
+  INDEX_PATH,
+  MANIFEST_PATH,
+  USER_PATH,
+  parseSessionPath,
+  sessionFilesDir,
+} from './paths.js'
+import { checkManifest, readFolders, readSessionFile, readSessionIndex } from './schema.js'
 import { toLocalSession } from './toLocal.js'
 import {
   ArchiveError,
@@ -73,12 +81,13 @@ export const checkArchiveFormat = async (file: File): Promise<void> => {
 }
 
 /**
- * 流式导入：manifest → user（不导入）→ 全部会话 JSON → index → 全部图片。
- * 也支持会话与图片交错排列、index 位于末尾的条目顺序。
+ * 流式导入：manifest → folders → user（不导入）→ 全部会话 JSON → index → 全部图片。
+ * 也支持会话与图片交错排列、index 位于末尾的条目顺序；v3 归档没有分组条目，按空列表处理。
  * 会话读完立即暂存，只保留图片路径映射；图片全部读完后逐会话回填 MIME，不改变图片身份。
  * 写入导入暂存存储；调用方负责先清空暂存，成功后替换正式数据，失败时清理暂存。
+ * 返回归档中的分组列表，供调用方与会话在同一事务提交。
  */
-export const importArchive = async (file: File): Promise<void> => {
+export const importArchive = async (file: File): Promise<Folder[]> => {
   if (!(await isZipFile(file))) {
     fail('backupUnrecognized')
   }
@@ -86,7 +95,10 @@ export const importArchive = async (file: File): Promise<void> => {
   const images = new Map<string, string>()
   /** 已保存的原件：文件 ID → MIME。同一图片出现在多个会话目录时只保存一次。 */
   const stored = new Map<string, string>()
+  /** 会话引用到的分组 id；条目乱序时分组可能晚于会话读到，结束后统一校验。 */
+  const referencedFolders = new Set<string>()
   let manifest = false
+  let folders: FolderFile[] | undefined
   let index: SessionIndexEntry[] | undefined
   let currentSessionId: string | undefined
 
@@ -114,6 +126,11 @@ export const importArchive = async (file: File): Promise<void> => {
       } else if (path === USER_PATH && !index && imported.size === 0) {
         // 账号信息（已脱敏）不导入；文件可能缺失。
         await skipEntry(entry)
+      } else if (path === FOLDERS_PATH && folders === undefined) {
+        folders = readFolders(await readJson(entry))
+        if (new Set(folders.map((folder) => folder.id)).size !== folders.length) {
+          fail('backupIncomplete')
+        }
       } else if (sessionId !== null && !index) {
         const local = toLocalSession(readSessionFile(await readJson(entry)))
         if (local.session.id !== sessionId || imported.has(sessionId)) {
@@ -121,6 +138,9 @@ export const importArchive = async (file: File): Promise<void> => {
         }
         imported.add(sessionId)
         currentSessionId = sessionId
+        if (local.session.folderId !== undefined) {
+          referencedFolders.add(local.session.folderId)
+        }
         for (const [imagePath, id] of local.images) {
           images.set(imagePath, id)
         }
@@ -156,4 +176,18 @@ export const importArchive = async (file: File): Promise<void> => {
     fail('backupIncomplete')
   }
   await db.updateStagingFileTypes(stored)
+  const folderFiles = folders ?? []
+  const folderIds = new Set(folderFiles.map((folder) => folder.id))
+  // 引用了不存在分组的会话移回未分组，避免残留悬空归属。
+  if ([...referencedFolders].some((id) => !folderIds.has(id))) {
+    await db.pruneStagingFolderIds(folderIds)
+  }
+  const now = Date.now()
+  return folderFiles.map((folder) => ({
+    id: folder.id,
+    name: folder.name,
+    createdAt: now,
+    updatedAt: now,
+    ...(folder.system_prompt !== undefined ? { systemPrompt: folder.system_prompt } : {}),
+  }))
 }

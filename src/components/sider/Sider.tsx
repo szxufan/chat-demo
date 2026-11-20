@@ -1,44 +1,118 @@
 import clsx from 'clsx'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useTranslate } from '../../i18n/index.js'
 import {
+  IconChevronDownOutline14,
+  IconChevronRightOutline14,
   IconCloseOutline16,
+  IconEditOutline16,
+  IconEllipsisOutline16,
+  IconFolderOutline16,
+  IconFolderPlusOutline16,
   IconPanelLeftOutline16,
   IconSearchOutline16,
   IconSettingsOutline16,
+  IconTrashOutline16,
   NewChatIcon,
 } from '../base/icons.js'
 import { setSiderCollapsed } from '../../services/settings.js'
+import { updateFolder, useFolders } from '../../services/chat/folders.js'
 import { groupSessions } from '../../services/chat/sessionGroups.js'
 import { searchSessions, type SessionSearchResult } from '../../services/chat/search.js'
-import { newChat, removeSession, useChatStore } from '../../services/chat/store.js'
-import type { SessionSummary } from '../../services/chat/types.js'
+import {
+  moveSessionToFolder,
+  newChat,
+  newChatInFolder,
+  removeFolder,
+  removeSession,
+  useChatStore,
+} from '../../services/chat/store.js'
+import type { Folder, SessionSummary } from '../../services/chat/types.js'
 import { Button } from '../base/Button.js'
 import { IconButton } from '../base/IconButton.js'
+import { Menu } from '../base/Menu.js'
 import { Modal } from '../base/Modal.js'
 import { showToast } from '../base/toastState.js'
 import { openSettings } from '../settings/settingsDialogState.js'
+import { FolderSettingsModal } from './FolderSettingsModal.js'
 import { closeMobileSider, useMobileSider } from './mobileSiderState.js'
+import { MoveToFolderModal } from './MoveToFolderModal.js'
 import { SessionItem } from './SessionItem.js'
 import { SessionPromptModal } from './SessionPromptModal.js'
 import { consumeSiderSearchFocus, useSiderSearchFocus } from './siderSearchState.js'
 import styles from './Sider.module.css'
 
-/** 展开的侧边栏：名称与收起按钮、开启新对话、搜索、按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
+/** 拖拽移出分组的放置区标识；分组 id 由 createId 生成，不会与之冲突 */
+const UNGROUPED_DROP = 'ungrouped'
+
+/** 展开的侧边栏：名称与收起按钮、开启新对话、搜索、分组与按时间分组的会话列表、底部设置；移动端放在抽屉里，收起按钮关闭抽屉 */
 export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
   const t = useTranslate()
   const sessions = useChatStore((state) => state.sessions)
   const activeId = useChatStore((state) => state.activeId)
+  const folders = useFolders((state) => state.folders)
   const [now, setNow] = useState(Date.now)
-  const groups = useMemo(() => groupSessions(sessions, now, t), [sessions, now, t])
+  // 归属已删除分组的会话按未分组展示，避免悬空引用导致会话消失。
+  const folderSections = useMemo(
+    () =>
+      folders.map((folder) => ({
+        folder,
+        sessions: sessions.filter((session) => session.folderId === folder.id),
+      })),
+    [folders, sessions]
+  )
+  const ungrouped = useMemo(() => {
+    const ids = new Set(folders.map((folder) => folder.id))
+    return sessions.filter((session) => !session.folderId || !ids.has(session.folderId))
+  }, [sessions, folders])
+  const groups = useMemo(() => groupSessions(ungrouped, now, t), [ungrouped, now, t])
   const [deleting, setDeleting] = useState<SessionSummary | null>(null)
   const [deletePending, setDeletePending] = useState(false)
   const [promptEditing, setPromptEditing] = useState<SessionSummary | null>(null)
+  const [moving, setMoving] = useState<SessionSummary | null>(null)
+  /** null 表示新建分组 */
+  const [folderSettings, setFolderSettings] = useState<{ id: string | null } | null>(null)
+  const [folderDeleting, setFolderDeleting] = useState<Folder | null>(null)
+  const [folderDeletePending, setFolderDeletePending] = useState(false)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SessionSearchResult[] | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const searchFocusPending = useSiderSearchFocus((state) => state.pending)
   const searching = query.trim() !== ''
+
+  const handleDragStart = useCallback((id: string) => setDraggingId(id), [])
+  const handleDragEnd = useCallback(() => {
+    setDraggingId(null)
+    setDropTarget(null)
+  }, [])
+  const handleDrop = (folderId: string | null) => {
+    if (draggingId) {
+      moveSessionToFolder(draggingId, folderId)
+    }
+    setDraggingId(null)
+    setDropTarget(null)
+  }
+  const dropProps = (target: string, folderId: string | null) =>
+    draggingId
+      ? {
+          onDragOver: (event: DragEvent<HTMLDivElement>) => {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+            setDropTarget(target)
+          },
+          onDragLeave: (event: DragEvent<HTMLDivElement>) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setDropTarget((current) => (current === target ? null : current))
+            }
+          },
+          onDrop: (event: DragEvent<HTMLDivElement>) => {
+            event.preventDefault()
+            handleDrop(folderId)
+          },
+        }
+      : {}
 
   // 只处理收起态搜索按钮发起的聚焦请求，正常展开时不抢焦点。
   useEffect(() => {
@@ -103,19 +177,28 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
           onClick={() => (mobile ? closeMobileSider() : setSiderCollapsed(true))}
         />
       </div>
-      <button
-        type="button"
-        className={styles.newChat}
-        onClick={() => {
-          newChat()
-          closeMobileSider()
-        }}
-      >
-        <span className={styles.newChatIcon}>
-          <NewChatIcon />
-        </span>
-        {t('newChat')}
-      </button>
+      <div className={styles.newChatRow}>
+        <button
+          type="button"
+          className={styles.newChat}
+          onClick={() => {
+            newChat()
+            closeMobileSider()
+          }}
+        >
+          <span className={styles.newChatIcon}>
+            <NewChatIcon />
+          </span>
+          {t('newChat')}
+        </button>
+        <IconButton
+          size="m"
+          icon={<IconFolderPlusOutline16 />}
+          tooltip={t('newFolderButton')}
+          tooltipPlacement="bottom"
+          onClick={() => setFolderSettings({ id: null })}
+        />
+      </div>
       <div className={styles.searchRow}>
         <span className={styles.searchIcon}>
           <IconSearchOutline16 />
@@ -162,24 +245,152 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
                   snippet={result.snippet}
                   onDelete={() => setDeleting(result.session)}
                   onEditPrompt={() => setPromptEditing(result.session)}
+                  onMove={() => setMoving(result.session)}
                 />
               ))
             )
           ) : (
-            groups.map((group) => (
-              <div key={group.key} className={styles.section}>
-                <div className={styles.sectionHeader}>{group.label}</div>
-                {group.sessions.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    active={session.id === activeId}
-                    onDelete={() => setDeleting(session)}
-                    onEditPrompt={() => setPromptEditing(session)}
-                  />
+            <>
+              {folderSections.map(({ folder, sessions: folderSessions }) => (
+                <div key={folder.id} className={styles.section}>
+                  <div
+                    className={clsx(
+                      styles.folderHeader,
+                      dropTarget === folder.id && styles.dropTarget
+                    )}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={!folder.collapsed}
+                    onClick={() => updateFolder(folder.id, { collapsed: !folder.collapsed })}
+                    onKeyDown={(event) => {
+                      // 只处理头部自身的按键，忽略内部按钮冒泡上来的 Enter / Space。
+                      if (event.target !== event.currentTarget) {
+                        return
+                      }
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        updateFolder(folder.id, { collapsed: !folder.collapsed })
+                      }
+                    }}
+                    {...dropProps(folder.id, folder.id)}
+                  >
+                    <span className={styles.folderChevron}>
+                      {folder.collapsed ? (
+                        <IconChevronRightOutline14 />
+                      ) : (
+                        <IconChevronDownOutline14 />
+                      )}
+                    </span>
+                    <span className={styles.folderIcon}>
+                      <IconFolderOutline16 />
+                    </span>
+                    <span className={styles.folderName}>{folder.name}</span>
+                    <span
+                      className={styles.folderCount}
+                      aria-label={t('folderSessionCount', { count: folderSessions.length })}
+                    >
+                      {folderSessions.length}
+                    </span>
+                    <span
+                      className={styles.folderActions}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <IconButton
+                        size="xs"
+                        icon={<NewChatIcon />}
+                        tooltip={t('folderMenuNewChatOption')}
+                        onClick={() => {
+                          newChatInFolder(folder.id)
+                          closeMobileSider()
+                        }}
+                      />
+                      <Menu
+                        options={[
+                          {
+                            key: 'edit',
+                            label: t('folderMenuEditOption'),
+                            icon: <IconEditOutline16 />,
+                            onSelect: () => setFolderSettings({ id: folder.id }),
+                          },
+                          {
+                            key: 'newChat',
+                            label: t('folderMenuNewChatOption'),
+                            icon: <NewChatIcon />,
+                            onSelect: () => {
+                              newChatInFolder(folder.id)
+                              closeMobileSider()
+                            },
+                          },
+                          {
+                            key: 'delete',
+                            label: t('folderMenuDeleteOption'),
+                            icon: <IconTrashOutline16 />,
+                            danger: true,
+                            onSelect: () => setFolderDeleting(folder),
+                          },
+                        ]}
+                      >
+                        {({ toggle }) => (
+                          <IconButton
+                            icon={<IconEllipsisOutline16 />}
+                            aria-label={t('more')}
+                            onClick={toggle}
+                          />
+                        )}
+                      </Menu>
+                    </span>
+                  </div>
+                  {!folder.collapsed ? (
+                    folderSessions.length === 0 ? (
+                      <div className={styles.folderEmpty}>{t('folderEmpty')}</div>
+                    ) : (
+                      folderSessions.map((session) => (
+                        <SessionItem
+                          key={session.id}
+                          session={session}
+                          active={session.id === activeId}
+                          onDelete={() => setDeleting(session)}
+                          onEditPrompt={() => setPromptEditing(session)}
+                          onMove={() => setMoving(session)}
+                          onDragStart={mobile ? undefined : handleDragStart}
+                          onDragEnd={mobile ? undefined : handleDragEnd}
+                        />
+                      ))
+                    )
+                  ) : null}
+                </div>
+              ))}
+              <div
+                className={clsx(
+                  styles.ungroupedArea,
+                  folderSections.length > 0 && styles.withFolders,
+                  draggingId && styles.ungroupedDragging,
+                  dropTarget === UNGROUPED_DROP && styles.dropTarget
+                )}
+                {...dropProps(UNGROUPED_DROP, null)}
+              >
+                {draggingId && ungrouped.length === 0 ? (
+                  <div className={styles.ungroupedHint}>{t('moveToFolderUngrouped')}</div>
+                ) : null}
+                {groups.map((group) => (
+                  <div key={group.key} className={styles.section}>
+                    <div className={styles.sectionHeader}>{group.label}</div>
+                    {group.sessions.map((session) => (
+                      <SessionItem
+                        key={session.id}
+                        session={session}
+                        active={session.id === activeId}
+                        onDelete={() => setDeleting(session)}
+                        onEditPrompt={() => setPromptEditing(session)}
+                        onMove={() => setMoving(session)}
+                        onDragStart={mobile ? undefined : handleDragStart}
+                        onDragEnd={mobile ? undefined : handleDragEnd}
+                      />
+                    ))}
+                  </div>
                 ))}
               </div>
-            ))
+            </>
           )}
         </div>
       </div>
@@ -228,8 +439,65 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
           {t('deleteSessionWithFilesDescription')}
         </Modal>
       ) : null}
+      {folderDeleting ? (
+        <Modal
+          title={t('deleteFolderModalTitle')}
+          onClose={() => {
+            if (!folderDeletePending) {
+              setFolderDeleting(null)
+            }
+          }}
+          footer={
+            <>
+              <Button
+                variant="outlined"
+                disabled={folderDeletePending}
+                onClick={() => setFolderDeleting(null)}
+              >
+                {t('cancel')}
+              </Button>
+              <Button
+                variant="danger"
+                disabled={folderDeletePending}
+                onClick={async () => {
+                  setFolderDeletePending(true)
+                  try {
+                    if (await removeFolder(folderDeleting.id)) {
+                      setFolderDeleting(null)
+                    } else {
+                      showToast({ key: 'folderDeleteFailed', type: 'error' })
+                    }
+                  } finally {
+                    setFolderDeletePending(false)
+                  }
+                }}
+              >
+                {t('delete')}
+              </Button>
+            </>
+          }
+        >
+          {t('deleteFolderDescription')}
+        </Modal>
+      ) : null}
       {promptEditing ? (
         <SessionPromptModal sessionId={promptEditing.id} onClose={() => setPromptEditing(null)} />
+      ) : null}
+      {moving ? (
+        <MoveToFolderModal
+          sessionId={moving.id}
+          onClose={() => setMoving(null)}
+          onCreateFolder={() => {
+            setMoving(null)
+            setFolderSettings({ id: null })
+          }}
+        />
+      ) : null}
+      {folderSettings ? (
+        <FolderSettingsModal
+          folderId={folderSettings.id}
+          onClose={() => setFolderSettings(null)}
+        />
       ) : null}
     </div>
   )

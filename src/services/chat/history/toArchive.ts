@@ -269,6 +269,7 @@ export const toSessionFile = (original: Session, exportImage: ExportImage): Sess
     inserted_at: iso(session.createdAt),
     updated_at: iso(session.updatedAt),
     ...(session.systemPrompt !== undefined ? { system_prompt: session.systemPrompt } : {}),
+    ...(session.folderId !== undefined ? { folder_id: session.folderId } : {}),
     ...(session.contextSummary && summaryAnchor !== undefined
       ? {
           context_summary: {
@@ -288,4 +289,5 @@ export const toIndexEntry = (file: SessionFile): SessionIndexEntry => ({
   message_count: file.messages.length,
   inserted_at: file.inserted_at,
   updated_at: file.updated_at,
+  ...(file.folder_id !== undefined ? { folder_id: file.folder_id } : {}),
 })

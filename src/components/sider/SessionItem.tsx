@@ -4,6 +4,7 @@ import { useTranslate } from '../../i18n/index.js'
 import {
   IconEditOutline16,
   IconEllipsisOutline16,
+  IconFolderOutline16,
   IconSettingsOutline16,
   IconTrashOutline16,
 } from '../base/icons.js'
@@ -21,6 +22,9 @@ export const SessionItem = memo(function SessionItem({
   snippet,
   onDelete,
   onEditPrompt,
+  onMove,
+  onDragStart,
+  onDragEnd,
 }: {
   session: SessionSummary
   active: boolean
@@ -28,6 +32,10 @@ export const SessionItem = memo(function SessionItem({
   snippet?: SearchSnippet
   onDelete: () => void
   onEditPrompt: () => void
+  onMove: () => void
+  /** 提供时允许拖拽移动分组；搜索结果列表不启用 */
+  onDragStart?: (id: string) => void
+  onDragEnd?: () => void
 }) {
   const t = useTranslate()
   const [editing, setEditing] = useState(false)
@@ -61,6 +69,17 @@ export const SessionItem = memo(function SessionItem({
   return (
     <div
       className={clsx(styles.item, active && styles.active, snippet && styles.itemWithSnippet)}
+      draggable={onDragStart !== undefined}
+      onDragStart={
+        onDragStart
+          ? (event) => {
+              event.dataTransfer.setData('text/plain', session.id)
+              event.dataTransfer.effectAllowed = 'move'
+              onDragStart(session.id)
+            }
+          : undefined
+      }
+      onDragEnd={onDragEnd}
       onClick={() => {
         selectSession(session.id)
         closeMobileSider()
@@ -92,6 +111,12 @@ export const SessionItem = memo(function SessionItem({
               label: t('sessionItemMenuSystemPromptOption'),
               icon: <IconSettingsOutline16 />,
               onSelect: onEditPrompt,
+            },
+            {
+              key: 'move',
+              label: t('sessionItemMenuMoveOption'),
+              icon: <IconFolderOutline16 />,
+              onSelect: onMove,
             },
             {
               key: 'delete',

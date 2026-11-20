@@ -1,0 +1,16 @@
+.usage {
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-dimmed);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}

@@ -289,6 +289,7 @@ export const toLocalSession = (file: SessionFile): LocalSession => {
     createdAt: time(file.inserted_at),
     updatedAt: time(file.updated_at),
     ...(file.system_prompt !== undefined ? { systemPrompt: file.system_prompt } : {}),
+    ...(file.folder_id !== undefined ? { folderId: file.folder_id } : {}),
     ...(summary && file.messages.some((message) => message.id === summary.anchor_message_id)
       ? {
           contextSummary: {

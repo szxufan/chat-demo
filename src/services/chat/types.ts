@@ -157,8 +157,10 @@ export type Session = {
   messages: Message[]
   /** undefined 表示线性消息列表；null 表示空会话。 */
   rootMessageId?: string | null
-  /** 会话级系统提示词覆盖；undefined 表示跟随全局设置，空字符串表示不使用系统提示词。 */
+  /** 会话级系统提示词覆盖；undefined 表示跟随分组/全局设置，空字符串表示不使用系统提示词。 */
   systemPrompt?: string
+  /** 所属分组；缺省表示未分组。 */
+  folderId?: string
   /**
    * 上下文裁剪产生的早期对话摘要。anchorMessageId 是摘要覆盖的最后一条 assistant 消息，
    * 兼作请求窗口起点锚点；锚点不在当前可见路径上时摘要失效。text 为空表示仅机械裁剪、无摘要。
@@ -167,15 +169,28 @@ export type Session = {
 }
 
 /** 会话列表元数据；消息只在打开会话时加载。 */
-export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt'>
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt' | 'folderId'>
 
-/** 显式提取字段，避免将完整会话的消息带进列表。 */
+/** 显式提取字段，避免将完整会话的消息带进列表。folderId 始终保留键，未分组为 undefined，合并最新元数据时能覆盖旧值。 */
 export const toSessionSummary = (session: SessionSummary): SessionSummary => ({
   id: session.id,
   title: session.title,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
+  folderId: session.folderId,
 })
+
+/** 会话分组；组内会话共享分组系统提示词，会话级覆盖优先。 */
+export type Folder = {
+  id: string
+  name: string
+  /** 分组级系统提示词；undefined 表示跟随全局设置，空字符串表示不使用系统提示词。 */
+  systemPrompt?: string
+  createdAt: number
+  updatedAt: number
+  /** 侧边栏折叠状态，随分组持久化。 */
+  collapsed?: boolean
+}
 
 /** 消息引用的全部本地原件 id：用户上传附件与 MCP 生成媒体；同一 id 可被多条消息（含兄弟版本）共用。 */
 export const collectFileIds = (messages: readonly Message[]): Set<string> =>

@@ -1,8 +1,10 @@
 import { BackupError, fail } from './errors.js'
 import {
   EXPORT_FORMAT_VERSION,
+  MIN_IMPORT_FORMAT_VERSION,
   type ChatMessage,
   type FileEntry,
+  type FolderFile,
   type Fragment,
   type SearchResult,
   type SessionFile,
@@ -232,10 +234,24 @@ export const checkManifest = (value: unknown): void => {
   if (typeof version === 'number' && version > EXPORT_FORMAT_VERSION) {
     fail('backupNewerVersion')
   }
-  if (version !== EXPORT_FORMAT_VERSION) {
+  if (
+    typeof version !== 'number' ||
+    version < MIN_IMPORT_FORMAT_VERSION ||
+    version > EXPORT_FORMAT_VERSION
+  ) {
     fail('backupInvalidVersion')
   }
 }
+
+/** chat_folders.json；v3 归档没有该条目，按空列表处理。 */
+export const readFolders: Read<FolderFile[]> = list((value) => {
+  const item = record(value)
+  return {
+    id: sessionId(item.id),
+    name: string(item.name),
+    ...('system_prompt' in item ? { system_prompt: string(item.system_prompt) } : {}),
+  }
+})
 
 export const readSessionIndex: Read<SessionIndexEntry[]> = list((value) => {
   const item = record(value)
@@ -246,6 +262,7 @@ export const readSessionIndex: Read<SessionIndexEntry[]> = list((value) => {
     message_count: count(item.message_count),
     inserted_at: time(item.inserted_at),
     updated_at: time(item.updated_at),
+    ...('folder_id' in item ? { folder_id: sessionId(item.folder_id) } : {}),
   }
 })
 
@@ -264,6 +281,7 @@ export const readSessionFile: Read<SessionFile> = (value) => {
     inserted_at: time(item.inserted_at),
     updated_at: time(item.updated_at),
     ...('system_prompt' in item ? { system_prompt: string(item.system_prompt) } : {}),
+    ...('folder_id' in item ? { folder_id: sessionId(item.folder_id) } : {}),
     ...('context_summary' in item ? { context_summary: contextSummary(item.context_summary) } : {}),
     messages: list(message)(item.messages),
   }

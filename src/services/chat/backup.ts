@@ -1,5 +1,6 @@
 import { formatDate } from '../../utils/format.js'
 import * as db from './db.js'
+import { useFolders } from './folders.js'
 import { replaceHistory, useChatStore } from './store.js'
 import type { Session } from './types.js'
 
@@ -21,6 +22,7 @@ export const exportHistory = (): Promise<{ name: string; blob: Blob }> =>
   enqueueBackup(async () => {
     // 列表和已加载内容保留导出开始时的快照；未打开的会话逐条读取，不填满详情缓存。
     const { sessions, sessionCache } = useChatStore.getState()
+    const folders = useFolders.getState().folders
     async function* readSessions(): AsyncGenerator<Session> {
       for (const summary of sessions) {
         const session = Object.hasOwn(sessionCache, summary.id)
@@ -35,7 +37,7 @@ export const exportHistory = (): Promise<{ name: string; blob: Blob }> =>
     }
     const { exportArchive } = await import('./history/exportArchive.js')
     const now = new Date()
-    const blob = await exportArchive(readSessions())
+    const blob = await exportArchive(readSessions(), folders)
     return { name: backupFileName(now), blob }
   })
 
@@ -50,8 +52,8 @@ export const importHistory = (file: File): Promise<number> =>
     return replaceHistory(() => importArchive(file))
   })
 
-/** 确认删除后调用：以空历史原子替换全部本地会话与附件，保留 API Key 和其他设置。 */
+/** 确认删除后调用：以空历史原子替换全部本地会话、分组与附件，保留 API Key 和其他设置。 */
 export const clearHistory = (): Promise<void> =>
   enqueueBackup(async () => {
-    await replaceHistory(async () => {})
+    await replaceHistory(async () => [])
   })

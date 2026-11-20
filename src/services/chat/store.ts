@@ -32,11 +32,22 @@ import {
   clearAllDrafts,
   clearDraft,
   clearSentDraft,
+  flushDraftPersistence,
   getDraft,
+  hydrateDrafts,
   prepareDraftMessage,
   setNewChatSystemPrompt,
   useDrafts,
 } from './drafts.js'
+import {
+  forgetFolder,
+  getFolder,
+  resetFolders,
+  resolveSystemPrompt,
+  setActiveFolder,
+  updateFolder,
+  useFolders,
+} from './folders.js'
 import { createLatestReminder } from './latestReminder.js'
 import { getMcpToolset, type McpToolset } from '../mcp/tools.js'
 import {
@@ -54,6 +65,7 @@ import {
   toSessionSummary,
   type AssistantMessage,
   type FileAttachment,
+  type Folder,
   type Message,
   type Session,
   type SessionSummary,
@@ -125,7 +137,10 @@ const getStreamController = (id: string) => {
 }
 
 const sameSummary = (a: SessionSummary, b: SessionSummary) =>
-  a.title === b.title && a.createdAt === b.createdAt && a.updatedAt === b.updatedAt
+  a.title === b.title &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.folderId === b.folderId
 
 const sessionAccess = new Map<string, number>()
 const unsavedSessions = new Set<string>()
@@ -249,6 +264,7 @@ export const retrySaveSessions = () => {
 /** 离开前先合并尚未绘制的增量；隐藏期间浏览器可能暂停动画帧。 */
 export const bindChatPersistence = () => {
   const save = () => {
+    flushDraftPersistence()
     if (get().importingHistory) {
       return
     }
@@ -323,9 +339,15 @@ export const initChat = (): Promise<void> => {
   set({ initError: false })
   initTask = (async () => {
     try {
-      const summaries = await db.loadSessionSummaries()
+      const [summaries, folders, storedDrafts] = await Promise.all([
+        db.loadSessionSummaries(),
+        db.loadFolders(),
+        db.loadDrafts(),
+      ])
       if (epoch === historyEpoch) {
+        hydrateDrafts(storedDrafts)
         set({ ready: true, sessions: sortSessions(summaries) })
+        resetFolders(folders)
       }
     } catch (error) {
       if (epoch === historyEpoch) {
@@ -412,8 +434,9 @@ const waitForIdle = (sessionId?: string) =>
 /**
  * 替换历史对话：先写入暂存，成功后原子替换旧记录；写入为空即删除全部会话与附件。
  * 期间停止生成并禁止修改会话；失败时清除暂存，保留原有记录。
+ * write 返回本次替换的分组列表（清空历史时为空数组），与会话在同一事务提交。
  */
-export const replaceHistory = async (write: () => Promise<void>): Promise<number> => {
+export const replaceHistory = async (write: () => Promise<Folder[]>): Promise<number> => {
   if (get().importingHistory) {
     throw new Error('History replacement is already in progress')
   }
@@ -430,9 +453,10 @@ export const replaceHistory = async (write: () => Promise<void>): Promise<number
     await waitForIdle()
     await db.clearStaging()
     let summaries: SessionSummary[]
+    let folders: Folder[]
     try {
-      await write()
-      summaries = await db.commitStaging()
+      folders = await write()
+      summaries = await db.commitStaging(folders)
     } catch (error) {
       await db.clearStaging().catch(db.reportStorageError('clear unfinished history replacement'))
       throw error
@@ -450,6 +474,7 @@ export const replaceHistory = async (write: () => Promise<void>): Promise<number
       sessionSaveErrors: {},
       activeId: null,
     })
+    resetFolders(folders)
     return summaries.length
   } finally {
     set({ importingHistory: false })
@@ -466,9 +491,25 @@ export const replaceHistory = async (write: () => Promise<void>): Promise<number
 
 export const newChat = () => {
   if (!get().importingHistory) {
+    setActiveFolder(null)
     set({ activeId: null })
     trimSessionCache()
   }
+}
+
+/** 在指定分组开启新对话；首次发送时会话归入该分组。 */
+export const newChatInFolder = (id: string) => {
+  const folder = getFolder(id)
+  if (get().importingHistory || !folder) {
+    return
+  }
+  // 目标分组折叠时先展开，让欢迎页提示与后续归属可见。
+  if (folder.collapsed) {
+    updateFolder(id, { collapsed: false })
+  }
+  setActiveFolder(id)
+  set({ activeId: null })
+  trimSessionCache()
 }
 
 export const selectSession = (id: string) => {
@@ -524,13 +565,83 @@ export const setSessionSystemPrompt = (id: string, systemPrompt: string | undefi
   }
 }
 
-/** 读取会话的系统提示词覆盖；详情未缓存时先加载，null 表示读取失败。 */
+/** 读取会话的系统提示词覆盖与所属分组；详情未缓存时先加载，null 表示读取失败。 */
 export const readSessionSystemPrompt = async (
   id: string
-): Promise<{ systemPrompt?: string } | null> => {
+): Promise<{ systemPrompt?: string; folderId?: string } | null> => {
   await ensureSessionLoaded(id)
   const session = getSession(id)
-  return session ? { systemPrompt: session.systemPrompt } : null
+  return session ? { systemPrompt: session.systemPrompt, folderId: session.folderId } : null
+}
+
+/** 移动会话到指定分组；null 表示移出分组。未打开的会话也可移动。 */
+export const moveSessionToFolder = (id: string, folderId: string | null) => {
+  if (get().importingHistory || deletingSessions.has(id)) {
+    return
+  }
+  const folder = folderId === null ? undefined : getFolder(folderId)
+  if (folderId !== null && !folder) {
+    return
+  }
+  // 移入折叠的分组时先展开，避免会话移动后从列表中消失、没有反馈。
+  if (folder?.collapsed) {
+    updateFolder(folder.id, { collapsed: false })
+  }
+  const target = folderId ?? undefined
+  if (getSession(id)) {
+    updateSession(id, (session) => {
+      const next = { ...session }
+      if (target === undefined) {
+        delete next.folderId
+      } else {
+        next.folderId = target
+      }
+      return next
+    })
+    persist(id)
+  } else {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, folderId: target } : session
+      ),
+    }))
+    void db.setSessionFolder(id, target).catch(db.reportStorageError('set session folder'))
+  }
+}
+
+/** 删除分组；组内会话不删除，移回未分组。失败返回 false，界面提示重试。 */
+export const removeFolder = async (id: string): Promise<boolean> => {
+  if (get().importingHistory || !getFolder(id)) {
+    return false
+  }
+  const epoch = historyEpoch
+  try {
+    await db.removeFolder(id)
+  } catch (error) {
+    db.reportStorageError('remove folder')(error)
+    return false
+  }
+  // 等待期间历史被整体替换时内存已重置，无需再同步。
+  if (epoch !== historyEpoch) {
+    return true
+  }
+  set((state) => ({
+    sessions: state.sessions.map((session) =>
+      session.folderId === id ? { ...session, folderId: undefined } : session
+    ),
+    sessionCache: Object.fromEntries(
+      Object.entries(state.sessionCache).map(([sessionId, session]) => {
+        if (session.folderId !== id) {
+          return [sessionId, session]
+        }
+        const next = { ...session }
+        delete next.folderId
+        return [sessionId, next]
+      })
+    ),
+  }))
+  forgetFolder(id)
+  return true
 }
 
 /**
@@ -620,6 +731,7 @@ export const sendMessage = (targetSessionId: string | null) => {
   }
   if (sessionId === null) {
     const pendingPrompt = useDrafts.getState().newChatSystemPrompt
+    const folder = getFolder(useFolders.getState().activeFolderId ?? undefined)
     const session: Session = {
       id: createId(),
       title: '',
@@ -628,6 +740,10 @@ export const sendMessage = (targetSessionId: string | null) => {
       messages: [],
       rootMessageId: null,
       ...(pendingPrompt !== undefined ? { systemPrompt: pendingPrompt } : {}),
+      ...(folder ? { folderId: folder.id } : {}),
+    }
+    if (folder?.collapsed) {
+      updateFolder(folder.id, { collapsed: false })
     }
     sessionId = session.id
     touchSession(session.id)
@@ -827,6 +943,7 @@ export const beginRealtimeSession = (
   } else {
     const now = Date.now()
     const pendingPrompt = useDrafts.getState().newChatSystemPrompt
+    const folder = getFolder(useFolders.getState().activeFolderId ?? undefined)
     const session: Session = {
       id: createId(),
       title: '',
@@ -835,6 +952,10 @@ export const beginRealtimeSession = (
       messages: [],
       rootMessageId: null,
       ...(pendingPrompt !== undefined ? { systemPrompt: pendingPrompt } : {}),
+      ...(folder ? { folderId: folder.id } : {}),
+    }
+    if (folder?.collapsed) {
+      updateFolder(folder.id, { collapsed: false })
     }
     sessionId = session.id
     touchSession(session.id)
@@ -1141,7 +1262,7 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
   try {
     const apiKey = useSettings.getState().apiKey ?? ''
     const model = initial.model ?? DEFAULT_MODEL
-    const systemPrompt = getSession(sessionId)?.systemPrompt ?? useSettings.getState().systemPrompt
+    const systemPrompt = resolveSystemPrompt(getSession(sessionId))
     // 续写沿用原回答快照，重新生成的快照独立保存。
     const latestReminder = request.prefix
       ? request.prefix.latestReminder

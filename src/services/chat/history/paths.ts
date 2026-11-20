@@ -1,6 +1,7 @@
-/** ZIP 条目名。条目顺序固定：manifest → user（可能缺失）→ 全部会话 JSON → index → 全部图片。 */
+/** ZIP 条目名。条目顺序固定：manifest → folders → user（可能缺失）→ 全部会话 JSON → index → 全部图片。 */
 
 export const MANIFEST_PATH = 'manifest.json'
+export const FOLDERS_PATH = 'chat_folders.json'
 export const USER_PATH = 'user.json'
 export const INDEX_PATH = 'chat_session_index.json'
 

@@ -1,0 +1,66 @@
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-color: var(--scroll-color) transparent;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background-color: var(--dsw-specific-sidebar-nav-item-hover);
+  }
+}
+
+.optionSelected {
+  background-color: var(--dsw-specific-sidebar-nav-item-active-accent);
+  color: var(--dsw-alias-brand-primary-invert);
+
+  &:hover {
+    background-color: var(--dsw-specific-sidebar-nav-item-active-accent);
+  }
+}
+
+.optionIcon {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.optionLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.optionCheck {
+  display: flex;
+  flex-shrink: 0;
+}
+
+@media not all and (min-width: 768px) {
+  .option {
+    padding: 11px 12px;
+    border-radius: 16px;
+    font-size: 16px;
+  }
+}

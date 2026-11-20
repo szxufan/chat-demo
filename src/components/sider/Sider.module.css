@@ -34,14 +34,21 @@
   color: var(--dsw-alias-brand-primary);
 }
 
+.newChatRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .newChat {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
-  width: 100%;
   height: 40px;
   padding: 0 16px;
   border-radius: 100px;
@@ -162,6 +169,115 @@
   user-select: none;
 }
 
+.folderHeader {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 6px 0 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  background-color: var(--dsw-specific-sidebar-fill);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--dsw-alias-button-primary-fill);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--dsw-specific-sidebar-nav-item-hover);
+    }
+
+    &:hover .folderActions {
+      display: flex;
+    }
+  }
+}
+
+.folderChevron {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.folderIcon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.folderName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.folderCount {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.folderActions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.folderEmpty {
+  padding: 6px 10px 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dropTarget {
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-brand-primary);
+}
+
+.ungroupedArea {
+  border-radius: 12px;
+
+  &.withFolders {
+    margin-top: 16px;
+  }
+
+  &.ungroupedDragging {
+    box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+  }
+
+  &.dropTarget {
+    box-shadow: inset 0 0 0 2px var(--dsw-alias-brand-primary);
+  }
+}
+
+.ungroupedHint {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@media (hover: none) {
+  .folderActions {
+    display: flex;
+  }
+}
+
 .bottom {
   display: flex;
   flex-shrink: 0;
@@ -269,6 +385,12 @@
 
   .sectionHeader {
     padding: 4px 10px 3px;
+    font-size: 14px;
+    line-height: 22px;
+  }
+
+  .folderHeader {
+    height: 36px;
     font-size: 14px;
     line-height: 22px;
   }

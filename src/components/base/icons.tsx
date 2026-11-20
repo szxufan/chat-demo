@@ -130,6 +130,28 @@ export const IconEllipsisOutline16 = () => (
   </svg>
 )
 
+export const IconFolderOutline16 = () => (
+  <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M2.25 2H5.9L7.3 3.44H13.75C14.44 3.44 15 4 15 4.69V12.75C15 13.44 14.44 14 13.75 14H2.25C1.56 14 1 13.44 1 12.75V3.25C1 2.56 1.56 2 2.25 2ZM2.3 3.3H5.36L6.76 4.74H13.7V12.7H2.3V3.3Z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
+export const IconFolderPlusOutline16 = () => (
+  <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M2.25 2H5.9L7.3 3.44H13.75C14.44 3.44 15 4 15 4.69V12.75C15 13.44 14.44 14 13.75 14H2.25C1.56 14 1 13.44 1 12.75V3.25C1 2.56 1.56 2 2.25 2ZM2.3 3.3H5.36L6.76 4.74H13.7V12.7H2.3V3.3ZM7.35 6.6H8.65V8.05H10.1V9.35H8.65V10.8H7.35V9.35H5.9V8.05H7.35V6.6Z"
+      fill="currentColor"
+    />
+  </svg>
+)
+
 export const IconFollowsystemOutline16 = () => (
   <svg width={16} height={16} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12.4827 13.9839V15.2741H3.33758V13.9839H12.4827Z" fill="currentColor" />

@@ -1,0 +1,41 @@
+.nameRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nameLabel {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.nameInput {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  outline: none;
+  caret-color: var(--dsw-alias-brand-text);
+  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+
+  &:focus {
+    border-color: var(--dsw-alias-brand-primary);
+  }
+
+  &::placeholder {
+    color: var(--dsw-alias-label-caption);
+  }
+}
+
+@media not all and (min-width: 768px) {
+  .nameInput {
+    font-size: 16px;
+  }
+}

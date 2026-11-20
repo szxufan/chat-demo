@@ -1,13 +1,31 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import { collectFileIds, toSessionSummary, type Session, type SessionSummary } from './types.js'
+import {
+  collectFileIds,
+  toSessionSummary,
+  type Folder,
+  type Session,
+  type SessionSummary,
+} from './types.js'
 
 /** IndexedDB 存储结构版本；新增或调整存储、索引时递增。 */
-const DB_VERSION = 11
+const DB_VERSION = 13
 
 /** 文件原件按附件的本地 id 存储，所有引用同一 id 的消息共用一份；用于缩略图、打开查看，以及发送时内联。 */
 export type StoredFile = {
   id: string
   blob: Blob
+}
+
+/**
+ * 未发送的草稿。新对话的 null 会话键编码为 '__new__'。
+ * 附件存 File 原件（结构化克隆），previewUrl 不持久化，加载时用 URL.createObjectURL 重建。
+ */
+export type StoredDraft = {
+  id: string
+  text: string
+  /** 仅新对话记录保存；undefined 表示跟随全局，'' 是有意义的显式覆盖。 */
+  newChatSystemPrompt?: string
+  attachments: { id: string; file: File; isImage: boolean }[]
 }
 
 /** 文件引用留在摘要中，删除会话时通过索引判断原件是否仍被引用。 */
@@ -21,8 +39,12 @@ interface ChatDB extends DBSchema {
     value: StoredSessionSummary
     indexes: { fileIds: string }
   }
+  /** 会话分组 */
+  folders: { key: string; value: Folder }
   /** 当前使用的文件原件 */
   files: { key: string; value: StoredFile }
+  /** 未发送的草稿，按会话 id 存储（新对话编码为 '__new__'） */
+  drafts: { key: string; value: StoredDraft }
   /**
    * 历史导入的暂存：导入过程中会话与原件只写入这两个存储，`sessions` / `files` 保持不变；
    * 全部校验通过后在一个事务中替换正式数据并清空暂存，失败时只清空暂存。
@@ -51,7 +73,14 @@ const getDB = () =>
   (dbPromise ??= openDB<ChatDB>('chat-demo', DB_VERSION, {
     upgrade(db, _oldVersion, _newVersion, tx) {
       // 初始化当前格式需要的存储与索引，不迁移旧消息。
-      for (const name of ['sessions', 'files', 'sessionsStaging', 'filesStaging'] as const) {
+      for (const name of [
+        'sessions',
+        'files',
+        'folders',
+        'drafts',
+        'sessionsStaging',
+        'filesStaging',
+      ] as const) {
         if (!db.objectStoreNames.contains(name)) {
           db.createObjectStore(name, { keyPath: 'id' })
         }
@@ -170,6 +199,67 @@ export const setSessionSystemPrompt = async (
   ])
 }
 
+export const loadFolders = async (): Promise<Folder[]> => (await getDB()).getAll('folders')
+
+export const saveFolder = async (folder: Folder): Promise<void> => {
+  await (await getDB()).put('folders', folder)
+}
+
+/** 未打开的会话也可移动分组，原子更新详情和列表。undefined 表示移出分组。 */
+export const setSessionFolder = async (id: string, folderId: string | undefined): Promise<void> => {
+  const tx = (await getDB()).transaction(['sessions', 'sessionSummaries'], 'readwrite')
+  await Promise.all([
+    (async () => {
+      try {
+        const sessions = tx.objectStore('sessions')
+        const session = await sessions.get(id)
+        if (session) {
+          if (folderId === undefined) {
+            delete session.folderId
+          } else {
+            session.folderId = folderId
+          }
+          await sessions.put(session)
+          await tx.objectStore('sessionSummaries').put(storedSummary(session))
+        }
+      } catch (error) {
+        abortTransaction(tx)
+        throw error
+      }
+    })(),
+    tx.done,
+  ])
+}
+
+/** 删除分组并把组内会话移回未分组；同一事务完成，不删除会话。 */
+export const removeFolder = async (folderId: string): Promise<void> => {
+  const tx = (await getDB()).transaction(['folders', 'sessions', 'sessionSummaries'], 'readwrite')
+  await Promise.all([
+    (async () => {
+      try {
+        await tx.objectStore('folders').delete(folderId)
+        const summaries = tx.objectStore('sessionSummaries')
+        for (
+          let cursor = await tx.objectStore('sessions').openCursor();
+          cursor;
+          cursor = await cursor.continue()
+        ) {
+          const session = cursor.value
+          if (session.folderId === folderId) {
+            delete session.folderId
+            await cursor.update(session)
+            await summaries.put(storedSummary(session))
+          }
+        }
+      } catch (error) {
+        abortTransaction(tx)
+        throw error
+      }
+    })(),
+    tx.done,
+  ])
+}
+
 /** 删除会话，仅清理已无会话引用的本地原件；远端文件不删。 */
 export const deleteSession = async (sessionId: string): Promise<void> => {
   const tx = (await getDB()).transaction(['sessions', 'sessionSummaries', 'files'], 'readwrite')
@@ -203,6 +293,20 @@ export const saveFiles = (files: StoredFile[]): Promise<void> => putFiles('files
 
 export const loadFile = async (id: string): Promise<Blob | undefined> =>
   (await (await getDB()).get('files', id))?.blob
+
+export const loadDrafts = async (): Promise<StoredDraft[]> => (await getDB()).getAll('drafts')
+
+export const saveDraft = async (draft: StoredDraft): Promise<void> => {
+  await (await getDB()).put('drafts', draft)
+}
+
+export const deleteDraft = async (id: string): Promise<void> => {
+  await (await getDB()).delete('drafts', id)
+}
+
+export const clearDrafts = async (): Promise<void> => {
+  await (await getDB()).clear('drafts')
+}
 
 /** 清空导入暂存：开始导入前清除上次中断（如关闭页面）遗留的数据，导入失败后清除本次写入。 */
 export const clearStaging = async (): Promise<void> => {
@@ -250,14 +354,32 @@ export const updateStagingFileTypes = async (types: ReadonlyMap<string, string>)
   ])
 }
 
+/** 导入的会话可能引用归档中不存在的分组（条目乱序或手工归档），提交前统一清除引用。 */
+export const pruneStagingFolderIds = async (validIds: ReadonlySet<string>): Promise<void> => {
+  const tx = (await getDB()).transaction('sessionsStaging', 'readwrite')
+  await Promise.all([
+    (async () => {
+      for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
+        const session = cursor.value
+        if (session.folderId !== undefined && !validIds.has(session.folderId)) {
+          delete session.folderId
+          await cursor.update(session)
+        }
+      }
+    })(),
+    tx.done,
+  ])
+}
+
 /**
- * 导入完成后用暂存替换正式数据：同一事务中替换会话、摘要和原件，并清空暂存。
+ * 导入完成后用暂存替换正式数据：同一事务中替换会话、摘要、分组和原件，并清空暂存。
  * 逐条游标复制，同一时间只读取一条记录；事务失败时整体回滚，正式数据不变。
+ * 分组元数据很小，校验后直接传入，在同一事务中整体替换。
  */
-export const commitStaging = async (): Promise<SessionSummary[]> => {
+export const commitStaging = async (folders: Folder[]): Promise<SessionSummary[]> => {
   const summaries: SessionSummary[] = []
   const tx = (await getDB()).transaction(
-    ['sessions', 'sessionSummaries', 'files', 'sessionsStaging', 'filesStaging'],
+    ['sessions', 'sessionSummaries', 'files', 'folders', 'sessionsStaging', 'filesStaging'],
     'readwrite'
   )
   const move = async (from: 'sessionsStaging' | 'filesStaging', to: 'sessions' | 'files') => {
@@ -286,7 +408,24 @@ export const commitStaging = async (): Promise<SessionSummary[]> => {
       throw error
     }
   }
-  await Promise.all([move('sessionsStaging', 'sessions'), move('filesStaging', 'files'), tx.done])
+  const replaceFolders = async () => {
+    try {
+      const target = tx.objectStore('folders')
+      await target.clear()
+      for (const folder of folders) {
+        await target.put(folder)
+      }
+    } catch (error) {
+      abortTransaction(tx)
+      throw error
+    }
+  }
+  await Promise.all([
+    move('sessionsStaging', 'sessions'),
+    move('filesStaging', 'files'),
+    replaceFolders(),
+    tx.done,
+  ])
   // 直接返回本次提交的列表，调用方无需在替换成功后再发起可能失败的读取。
   return summaries
 }

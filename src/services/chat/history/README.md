@@ -1,6 +1,6 @@
 # 历史导入导出
 
-chat-demo 使用 `export_format_version: 3` 的历史会话 ZIP，导出文件名为 `deepseek_data-日期.zip`。字段定义见 [format.ts](./format.ts)，实际校验规则见 [schema.ts](./schema.ts)。
+chat-demo 使用 `export_format_version: 4` 的历史会话 ZIP，导出文件名为 `deepseek_data-日期.zip`。v4 在 v3 基础上新增分组（`chat_folders.json`）与会话归属（`folder_id`）；v3 归档仍可导入，按无分组处理。字段定义见 [format.ts](./format.ts)，实际校验规则见 [schema.ts](./schema.ts)。
 
 ## 归档结构
 
@@ -8,6 +8,7 @@ chat-demo 使用 `export_format_version: 3` 的历史会话 ZIP，导出文件�
 
 ```text
 manifest.json                                      格式版本，必须是首个条目
+chat_folders.json                                  全部分组（名称与分组系统提示词）
 chat_sessions/{session_id}.json                    全部会话 JSON（含消息树）
 chat_session_index.json                            会话索引
 chat_sessions/{session_id}_files/{file_id}_{file_name}  全部图片原件
@@ -21,7 +22,7 @@ chat_sessions/{session_id}_files/{file_id}_{file_name}  全部图片原件
 
 1. 用户确认覆盖后，先读取首个条目检查格式与版本；不符合时直接失败，不中止正在生成的回答。
 2. 检查通过后停止生成，导入期间禁止修改会话。逐条解析会话并写入 IndexedDB 暂存区，按 `FILE.is_image` 保留图片身份，再读取图片原件并回填 MIME。图片按文件 ID 去重；字节识别仅补充具体 MIME，无法识别时仍按图片处理。
-3. 校验索引与会话一一对应、消息树和 ZIP 完整性后，在同一个事务中用暂存内容替换全部本地会话与附件。校验或提交失败时保留原有记录；中断遗留的暂存在下次导入前清理。
+3. 校验索引与会话一一对应、消息树和 ZIP 完整性后，在同一个事务中用暂存内容替换全部本地会话、分组与附件。会话引用了归档中不存在的分组时移回未分组。校验或提交失败时保留原有记录；中断遗留的暂存在下次导入前清理。
 
 消息树以 `id` / `parent_id` 还原，父消息 ID 必须小于子消息 ID、角色交替、根为提问。`current_message_id` 决定当前分支；其他节点默认选中 ID 最大的子消息。缺失原件的附件保留文件名和大小，不进入后续请求；有原件的导入图片在请求时内联为 base64。
 
@@ -40,7 +41,7 @@ chat_sessions/{session_id}_files/{file_id}_{file_name}  全部图片原件
 
 ## 导出范围
 
-导出完整消息树与当前分支，只附带本地存在的图片原件；非图片附件仅有元数据。所有消息都从当前正式消息转换为归档片段，包含搜索状态、页内查找词、模板正文、思考用时，以及阅读链接结果的 URL 和标题（旧版加密签名原样保留；客户端抓取的页面按 `TOOL_OPEN` 导出）。会话级系统提示词覆盖以可选字段 `system_prompt` 保存，缺省表示跟随全局设置；该字段不改变格式版本，旧版读取器会忽略它。导入后修改的内容、状态和附件以当前值为准，不回写原始归档。具体映射见 [toArchive.ts](./toArchive.ts)。
+导出完整消息树与当前分支，只附带本地存在的图片原件；非图片附件仅有元数据。所有消息都从当前正式消息转换为归档片段，包含搜索状态、页内查找词、模板正文、思考用时，以及阅读链接结果的 URL 和标题（旧版加密签名原样保留；客户端抓取的页面按 `TOOL_OPEN` 导出）。会话级系统提示词覆盖以可选字段 `system_prompt` 保存，缺省表示跟随分组/全局设置。分组以 `chat_folders.json` 保存（名称与分组级 `system_prompt`），会话归属以可选字段 `folder_id` 保存，缺省表示未分组；分组折叠状态属于界面状态，不导出。导入后修改的内容、状态和附件以当前值为准，不回写原始归档。具体映射见 [toArchive.ts](./toArchive.ts)。
 
 本地错误和拒绝提示以导出时的界面语言写入 `TEMPLATE_RESPONSE`，导入后保留文案且不参与上下文；正常空回复和达到长度上限的回复不补造提示。已有模板原样保留，重复导出不会重复追加这些提示。
 

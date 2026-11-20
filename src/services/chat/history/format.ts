@@ -9,10 +9,22 @@
 /** 2026-11-11T02:33:23.270Z */
 export type Iso8601Utc = string
 
-export const EXPORT_FORMAT_VERSION = 3
+/** v4 新增分组（chat_folders.json）与会话归属（folder_id）；v3 归档仍可导入。 */
+export const EXPORT_FORMAT_VERSION = 4
+
+/** 可导入的最低归档版本 */
+export const MIN_IMPORT_FORMAT_VERSION = 3
 
 /** manifest.json，ZIP 的第一个条目 */
-export type Manifest = { export_format_version: typeof EXPORT_FORMAT_VERSION }
+export type Manifest = { export_format_version: number }
+
+/** chat_folders.json 的一项；分组元数据，顺序即展示顺序 */
+export type FolderFile = {
+  id: string
+  name: string
+  /** 分组级系统提示词；缺省表示跟随全局设置 */
+  system_prompt?: string
+}
 
 /** chat_session_index.json 的一项，只列出成功写出的会话；位于全部会话 JSON 之后、图片之前 */
 export type SessionIndexEntry = {
@@ -22,6 +34,8 @@ export type SessionIndexEntry = {
   message_count: number
   inserted_at: Iso8601Utc
   updated_at: Iso8601Utc
+  /** 所属分组；缺省表示未分组（v3 归档无此字段） */
+  folder_id?: string
 }
 
 /** chat_sessions/{session_id}.json */
@@ -33,8 +47,10 @@ export type SessionFile = {
   current_message_id: number
   inserted_at: Iso8601Utc
   updated_at: Iso8601Utc
-  /** 会话级系统提示词覆盖；缺省表示跟随全局设置 */
+  /** 会话级系统提示词覆盖；缺省表示跟随分组/全局设置 */
   system_prompt?: string
+  /** 所属分组；缺省表示未分组（v3 归档无此字段） */
+  folder_id?: string
   /** 上下文裁剪产生的早期对话摘要；anchor_message_id 为摘要覆盖的最后一条 assistant 消息 */
   context_summary?: { text: string; anchor_message_id: number }
   /** 消息树，分支靠 parent_id */

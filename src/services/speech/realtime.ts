@@ -5,6 +5,7 @@ import { API_ORIGIN } from '../api/client.js'
 import type { ChatToolCall } from '../api/types.js'
 import { resolveMimeType } from '../attachments.js'
 import { getDraft, removeDraftAttachment } from '../chat/drafts.js'
+import { resolveSystemPrompt } from '../chat/folders.js'
 import { getReplyText } from '../chat/reply.js'
 import {
   executeToolCall,
@@ -183,10 +184,10 @@ const send = (call: Call, payload: Record<string, unknown>) => {
   }
 }
 
-/** 会话配置：系统提示词取会话覆盖或全局设置；Qwen3.8 与旧模型使用各自的音色字段。 */
+/** 会话配置：系统提示词按会话覆盖、分组提示词、全局设置的优先级解析；Qwen3.8 与旧模型使用各自的音色字段。 */
 const sessionConfig = (call: Call) => {
   const chat = useChatStore.getState().sessionCache[call.sessionId]
-  const baseInstructions = chat?.systemPrompt ?? useSettings.getState().systemPrompt
+  const baseInstructions = resolveSystemPrompt(chat)
   const instructions = call.wrappingUp
     ? [baseInstructions, TOOL_WRAP_UP_PROMPT].filter(Boolean).join('\n\n')
     : call.functionCalling
@@ -813,8 +814,7 @@ export const startRealtimeCall = (targetSessionId: string | null): boolean => {
     functionCalling && settings.model
       ? {
           model: settings.model,
-          systemPrompt:
-            useChatStore.getState().sessionCache[sessionId]?.systemPrompt ?? settings.systemPrompt,
+          systemPrompt: resolveSystemPrompt(useChatStore.getState().sessionCache[sessionId]),
           thinking: settings.thinking,
           effort: settings.thinkingEffort,
         }
